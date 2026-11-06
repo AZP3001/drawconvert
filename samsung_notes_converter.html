@@ -1,0 +1,1490 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>Sketch to Samsung Notes</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #101114;
+    --panel: #191b20;
+    --panel-2: #20232a;
+    --line: #30343d;
+    --text: #f2f3f5;
+    --muted: #9da3af;
+    --accent: #d6e6ff;
+    --accent-ink: #162234;
+    --radius: 18px;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100vh; color: var(--text);
+    background: radial-gradient(ellipse at 50% -25%, #283246 0%, transparent 55%), var(--bg);
+    font: 15px/1.5 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+  .shell { width: min(960px, calc(100% - 32px)); margin: 0 auto; padding: 46px 0 56px; }
+  header { margin: 0 0 28px; }
+  .eyebrow { color: #a8bddc; font-size: 11px; font-weight: 750; letter-spacing: .16em; text-transform: uppercase; }
+  h1 { margin: 8px 0 8px; font-size: clamp(30px, 5vw, 44px); line-height: 1.08; letter-spacing: -.045em; }
+  .intro { max-width: 650px; margin: 0; color: var(--muted); font-size: 15px; }
+  .layout { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(280px, .9fr); gap: 18px; align-items: start; }
+  .card { background: color-mix(in srgb, var(--panel) 94%, transparent); border: 1px solid var(--line); border-radius: var(--radius); padding: 20px; box-shadow: 0 18px 60px #0003; }
+  .card h2 { font-size: 14px; margin: 0 0 14px; letter-spacing: .01em; }
+  .dropzone {
+    min-height: 230px; border: 1.5px dashed #515b6c; border-radius: 14px;
+    display: flex; flex-direction: column; justify-content: center; align-items: center;
+    text-align: center; padding: 24px; background: #171a20; cursor: pointer;
+    transition: .18s ease; outline: none;
+  }
+  .dropzone:hover, .dropzone:focus-visible, .dropzone.dragover { border-color: #bdd7ff; background: #1c2430; }
+  .drop-icon { width: 52px; height: 52px; display: grid; place-items: center; border-radius: 16px; background: #293343; color: #d6e6ff; margin-bottom: 14px; }
+  .drop-icon svg { width: 25px; height: 25px; }
+  .drop-main { font-weight: 650; font-size: 16px; }
+  .drop-sub { color: var(--muted); font-size: 13px; margin-top: 5px; }
+  .file-meta { color: #c8d8ed; font-size: 12px; margin-top: 11px; overflow-wrap: anywhere; }
+  input[type=file] { display: none; }
+  .preview-wrap { margin-top: 16px; display: none; }
+  .preview-label { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin: 0 2px 8px; }
+  .preview { min-height: 180px; max-height: 360px; padding: 16px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #fff; overflow: hidden; }
+  .preview img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; box-shadow: 0 8px 32px #0008; }
+  .stroke-preview { padding: 12px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #171a20; }
+  .stroke-preview canvas { display: block; max-width: 100%; height: auto; box-shadow: 0 8px 32px #0008; }
+  .field { margin: 0 0 17px; }
+  .field:last-child { margin-bottom: 0; }
+  label { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; font-weight: 620; margin-bottom: 7px; }
+  .hint { color: var(--muted); font-size: 12px; font-weight: 400; }
+  input[type=text], select {
+    width: 100%; min-height: 43px; padding: 0 12px; border: 1px solid #3b414d;
+    border-radius: 10px; color: var(--text); background: #121419; font: inherit; outline: none;
+  }
+  input[type=text]:focus, select:focus { border-color: #aacaff; box-shadow: 0 0 0 3px #aacaff22; }
+  input[type=range] { width: 100%; accent-color: #c7dcfa; }
+  .range-row { display: flex; align-items: center; gap: 12px; }
+  output { min-width: 46px; text-align: right; color: #c8d8ed; font-size: 12px; font-variant-numeric: tabular-nums; }
+  .button {
+    width: 100%; min-height: 50px; margin-top: 22px; border: 0; border-radius: 12px;
+    background: var(--accent); color: var(--accent-ink); font: inherit; font-weight: 760;
+    cursor: pointer; transition: transform .14s ease, opacity .14s ease, filter .14s ease;
+  }
+  .button:hover:not(:disabled) { transform: translateY(-1px); filter: brightness(1.04); }
+  .button:active:not(:disabled) { transform: translateY(0); }
+  .button:disabled { opacity: .38; cursor: not-allowed; }
+  .status { min-height: 22px; margin-top: 12px; font-size: 12px; color: var(--muted); text-align: center; }
+  .privacy { display: flex; align-items: flex-start; gap: 9px; color: var(--muted); font-size: 12px; margin-top: 16px; }
+  .privacy svg { flex: 0 0 auto; width: 16px; height: 16px; margin-top: 1px; color: #9bb6d8; }
+  .note { margin-top: 18px; padding: 14px 15px; border: 1px solid #3b414d; background: #151820; border-radius: 12px; color: #b5bdca; font-size: 12px; }
+  .note strong { color: #e4e9f1; }
+  .footer { margin-top: 25px; color: #707987; text-align: center; font-size: 11px; }
+  @media (max-width: 740px) {
+    .shell { padding-top: 30px; }
+    .layout { grid-template-columns: 1fr; }
+    .dropzone { min-height: 190px; }
+  }
+</style>
+</head>
+<body>
+<main class="shell">
+  <header>
+    <div class="eyebrow">Offline line-art converter</div>
+    <h1>Drawing → Samsung Notes</h1>
+    <p class="intro">Turn line art (ideally a PNG with a transparent background) into a Samsung Notes <strong>.sdocx</strong> file made of real pen strokes you can select, move, erase and draw over.</p>
+  </header>
+
+  <div class="layout">
+    <section class="card" aria-labelledby="source-title">
+      <h2 id="source-title">01 — Choose your drawing</h2>
+      <div class="dropzone" id="dropzone" role="button" tabindex="0" aria-label="Choose or drop an image">
+        <div class="drop-icon" aria-hidden="true">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="3"/><circle cx="8.5" cy="8.5" r="1.5"/><path d="m21 15-5-5L5 21"/><path d="M12 12v6m-3-3h6"/></svg>
+        </div>
+        <div class="drop-main">Drop an image here</div>
+        <div class="drop-sub">or click to browse · transparent PNG works best · JPG, WEBP, GIF, SVG also accepted</div>
+        <div class="file-meta" id="file-meta"></div>
+      </div>
+      <input id="file-input" type="file" accept="image/*">
+      <div class="preview-wrap" id="preview-wrap">
+        <div class="preview-label"><span>Image preview</span><span id="dimensions"></span></div>
+        <div class="preview" id="preview"><img id="preview-img" alt="Preview of the selected drawing"></div>
+        <div class="preview-label" style="margin-top:14px"><span>Stroke preview — what Samsung Notes will get</span><span id="stroke-count"></span></div>
+        <div class="stroke-preview"><canvas id="stroke-canvas" width="360" height="509" role="img" aria-label="Preview of the generated pen strokes"></canvas></div>
+      </div>
+    </section>
+
+    <section class="card" aria-labelledby="settings-title">
+      <h2 id="settings-title">02 — Note settings</h2>
+      <div class="field">
+        <label for="note-name">Note name</label>
+        <input id="note-name" type="text" value="My Drawing" maxlength="100" autocomplete="off">
+      </div>
+      <div class="field">
+        <label for="background">Samsung Notes page background <span class="hint">Behind your strokes</span></label>
+        <select id="background">
+          <option value="white" selected>White</option>
+          <option value="auto">Auto — match opaque image edges</option>
+          <option value="black">Black</option>
+          <option value="dark">Dark grey</option>
+          <option value="warm">Warm paper</option>
+        </select>
+      </div>
+      <div class="field">
+        <label for="margin">Page margin <span class="hint">Space around the drawing</span></label>
+        <div class="range-row">
+          <input id="margin" type="range" min="0" max="10" step="1" value="2">
+          <output id="margin-value" for="margin">2%</output>
+        </div>
+      </div>
+      <div class="field">
+        <label for="detail">Detail <span class="hint">Left smooths lines, right keeps every wiggle</span></label>
+        <div class="range-row">
+          <input id="detail" type="range" min="0" max="100" step="5" value="60">
+          <output id="detail-value" for="detail">60</output>
+        </div>
+      </div>
+      <button class="button" id="convert" type="button" disabled>Convert to .sdocx <span aria-hidden="true">↗</span></button>
+      <div class="status" id="status" role="status" aria-live="polite">Choose an image to begin.</div>
+      <div class="privacy">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10" width="16" height="11" rx="2"/><path d="M8 10V7a4 4 0 1 1 8 0v3m-4 5v2"/></svg>
+        <span><strong>Private by design.</strong> Conversion happens locally in your browser. Your drawing is never uploaded.</span>
+      </div>
+    </section>
+  </div>
+
+  <div class="note"><strong>How it works:</strong> the drawing is traced in your browser. Inked pixels (alpha, or darkness on opaque images) are thinned to centre lines, split at crossings so each drawn line stays one stroke, simplified, and written as native Samsung Notes pen strokes (Pen tool) with the line's own colour and thickness. No image is embedded, so each stroke can be selected, moved and removed with the stroke eraser like strokes you drew yourself. Shading, gradients and texture are not reproduced: this is for line art.</div>
+  <div class="footer">Single-file tool · No account · No server</div>
+</main>
+
+<script id="sdocx-core">
+/*
+ * Stroke vectorizer and SDOCX stroke writer. Page/note containers adapted from
+ * the documented writer profile in Dietrich; stroke layout per FORMAT.md.
+ * Original project: https://github.com/Downhillghost/Dietrich
+ * MIT License — Copyright (c) 2026 Dietrich contributors
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ * The above copyright notice and this permission notice shall be included in all
+ * copies or substantial portions of the Software.
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+ * SOFTWARE.
+ */
+(function (global) {
+  "use strict";
+
+  // ======================================================================
+  // Vectorizer: RGBA pixels -> centre-line strokes (image pixel coordinates)
+  // ======================================================================
+  const MIN_COVERAGE = 0.08;     // weakest pixel that can count as ink
+  const MIN_SPECK_AREA = 4;      // smaller ink islands are noise
+  const MAX_HOLE_AREA = 3;       // smaller gaps inside ink are filled
+  const MAX_PAIR_ANGLE = 50 * Math.PI / 180;  // max bend for a line to continue through a crossing
+  const MAX_PAIR_COLOR = 64;     // max channel difference for a line to continue through a crossing
+  const OFF_X = [-1, 0, 1, 1, 1, 0, -1, -1];  // 8-neighbours p0..p7, clockwise from top-left
+  const OFF_Y = [-1, -1, -1, 0, 1, 1, 1, 0];
+
+  const clamp = (v, lo, hi) => Math.min(hi, Math.max(lo, v));
+  const quantile = (values, q) => {
+    if (!values.length) return 0;
+    const s = Float64Array.from(values).sort();
+    return s[Math.min(s.length - 1, Math.floor(q * s.length))];
+  };
+
+  // Simple points (8-connected ink, 4-connected background): deleting the centre keeps topology.
+  const SIMPLE = (() => {
+    const table = new Uint8Array(256);
+    for (let m = 0; m < 256; m++) {
+      const on = (k) => (m >> (k & 7)) & 1;
+      const count = (want, adjacency) => {
+        const seen = new Uint8Array(8);
+        let components = 0;
+        for (let s = 0; s < 8; s++) {
+          if (on(s) !== want || seen[s] || (want === 0 && s % 2 === 0)) continue;
+          components++;
+          const stack = [s]; seen[s] = 1;
+          while (stack.length) {
+            const k = stack.pop();
+            for (const a of adjacency(k)) if (on(a) === want && !seen[a]) { seen[a] = 1; stack.push(a); }
+          }
+        }
+        return components;
+      };
+      const ink = count(1, (k) => k % 2 ? [(k + 7) & 7, (k + 1) & 7, (k + 2) & 7, (k + 6) & 7] : [(k + 7) & 7, (k + 1) & 7]);
+      const background = count(0, (k) => [(k + 7) & 7, (k + 1) & 7]);
+      table[m] = ink === 1 && background === 1 ? 1 : 0;
+    }
+    return table;
+  })();
+
+  function borderColor(rgba, width, height) {
+    const channels = [[], [], []];
+    const take = (x, y) => { const i = (y * width + x) * 4; for (let c = 0; c < 3; c++) channels[c].push(rgba[i + c]); };
+    for (let x = 0; x < width; x++) { take(x, 0); take(x, height - 1); }
+    for (let y = 0; y < height; y++) { take(0, y); take(width - 1, y); }
+    return channels.map((c) => quantile(c, 0.5));
+  }
+
+  // Separable max filter (square window of radius r).
+  function maxFilter(src, W, H, r) {
+    const tmp = new Float32Array(src.length), out = new Float32Array(src.length);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      let m = 0;
+      for (let k = Math.max(0, x - r); k <= Math.min(W - 1, x + r); k++) m = Math.max(m, src[y * W + k]);
+      tmp[y * W + x] = m;
+    }
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      let m = 0;
+      for (let k = Math.max(0, y - r); k <= Math.min(H - 1, y + r); k++) m = Math.max(m, tmp[k * W + x]);
+      out[y * W + x] = m;
+    }
+    return out;
+  }
+
+  // Clears 8-connected components of `value` smaller than minArea (border-touching ones are kept).
+  function dropSmallComponents(mask, W, H, value, minArea) {
+    const seen = new Uint8Array(mask.length);
+    const neighbours = value ? 8 : 4;
+    for (let s = 0; s < mask.length; s++) {
+      if (mask[s] !== value || seen[s]) continue;
+      const members = [s]; seen[s] = 1;
+      let touchesBorder = false;
+      for (let h = 0; h < members.length; h++) {
+        const p = members[h], x = p % W, y = (p / W) | 0;
+        if (x === 0 || y === 0 || x === W - 1 || y === H - 1) { touchesBorder = true; continue; }
+        for (let k = 0; k < 8; k++) {
+          if (neighbours === 4 && k % 2 === 0) continue;
+          const q = p + OFF_X[k] + OFF_Y[k] * W;
+          if (mask[q] === value && !seen[q]) { seen[q] = 1; members.push(q); }
+        }
+      }
+      if (!touchesBorder && members.length < minArea) for (const p of members) mask[p] = value ? 0 : 1;
+    }
+  }
+
+  // Exact Euclidean distance from each ink pixel to the nearest background pixel (Felzenszwalb–Huttenlocher).
+  function distanceTransform(ink, W, H) {
+    const BIG = 1e12, n = Math.max(W, H);
+    const f = new Float64Array(n), d = new Float64Array(n), z = new Float64Array(n + 1), v = new Int32Array(n);
+    const grid = new Float32Array(W * H);   // squared distances stay exact integers below 2^24
+    for (let i = 0; i < grid.length; i++) grid[i] = ink[i] ? BIG : 0;
+    const pass = (len) => {
+      let k = 0; v[0] = 0; z[0] = -Infinity; z[1] = Infinity;
+      for (let q = 1; q < len; q++) {
+        let s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]);
+        while (s <= z[k]) { k--; s = ((f[q] + q * q) - (f[v[k]] + v[k] * v[k])) / (2 * q - 2 * v[k]); }
+        k++; v[k] = q; z[k] = s; z[k + 1] = Infinity;
+      }
+      k = 0;
+      for (let q = 0; q < len; q++) { while (z[k + 1] < q) k++; d[q] = (q - v[k]) * (q - v[k]) + f[v[k]]; }
+    };
+    for (let x = 0; x < W; x++) { for (let y = 0; y < H; y++) f[y] = grid[y * W + x]; pass(H); for (let y = 0; y < H; y++) grid[y * W + x] = d[y]; }
+    for (let y = 0; y < H; y++) { for (let x = 0; x < W; x++) f[x] = grid[y * W + x]; pass(W); for (let x = 0; x < W; x++) grid[y * W + x] = d[x]; }
+    const out = new Float32Array(W * H);
+    for (let i = 0; i < out.length; i++) out[i] = Math.sqrt(grid[i]);
+    return out;
+  }
+
+  // Distance-ordered homotopic thinning: peel simple pixels from the outside in, keep line ends.
+  function thin(ink, dist, W) {
+    const skel = ink.slice();
+    const off = OFF_X.map((dx, k) => dx + OFF_Y[k] * W);
+    const SHIFT = 2 ** 23;
+    const keys = [];
+    for (let i = 0; i < skel.length; i++) if (skel[i]) keys.push(Math.round(dist[i] * 16) * SHIFT + i);
+    let order = Float64Array.from(keys).sort().map((key) => key % SHIFT);
+    for (let changed = true; changed;) {
+      changed = false;
+      const keep = [];
+      for (const i of order) {
+        let mask = 0, count = 0;
+        for (let k = 0; k < 8; k++) if (skel[i + off[k]]) { mask |= 1 << k; count++; }
+        if (count > 1 && SIMPLE[mask]) { skel[i] = 0; changed = true; } else keep.push(i);
+      }
+      order = keep;
+    }
+    return skel;
+  }
+
+  // Skeleton -> graph of nodes (line ends, crossings) and edges (pixel chains between them).
+  function buildGraph(skel, dist, W) {
+    const off = OFF_X.map((dx, k) => dx + OFF_Y[k] * W);
+    const deg = new Uint8Array(skel.length);
+    const pixels = [];
+    for (let i = 0; i < skel.length; i++) {
+      if (!skel[i]) continue;
+      let c = 0;
+      for (let k = 0; k < 8; k++) c += skel[i + off[k]];
+      deg[i] = c; pixels.push(i);
+    }
+    const nodeOf = new Int32Array(skel.length).fill(-1);
+    const g = { nodes: [], edges: [], loops: [], dots: [] };
+    for (const i of pixels) {
+      if (nodeOf[i] >= 0) continue;
+      if (deg[i] >= 3) {
+        const id = g.nodes.length, members = [i];
+        nodeOf[i] = id;
+        let sx = 0, sy = 0, r = 0;
+        for (let h = 0; h < members.length; h++) {
+          const p = members[h];
+          sx += p % W; sy += (p / W) | 0; r = Math.max(r, dist[p]);
+          for (let k = 0; k < 8; k++) { const q = p + off[k]; if (deg[q] >= 3 && skel[q] && nodeOf[q] < 0) { nodeOf[q] = id; members.push(q); } }
+        }
+        g.nodes.push({ x: sx / members.length, y: sy / members.length, r, span: r, ends: [], members, alive: true });
+      } else if (deg[i] === 1) {
+        nodeOf[i] = g.nodes.length;
+        g.nodes.push({ x: i % W, y: (i / W) | 0, r: dist[i], span: dist[i], ends: [], members: [i], alive: true });
+      } else if (deg[i] === 0) {
+        g.dots.push(i);
+      }
+    }
+    const visited = new Uint8Array(skel.length);
+    const directPairs = new Set();
+    const addEdge = (a, b, pts) => {
+      const e = g.edges.length;
+      g.edges.push({ a, b, pts, alive: true });
+      g.nodes[a].ends.push(e * 2); g.nodes[b].ends.push(e * 2 + 1);
+    };
+    for (let n = 0; n < g.nodes.length; n++) {
+      for (const p of g.nodes[n].members) {
+        for (let k = 0; k < 8; k++) {
+          const q = p + off[k];
+          if (!skel[q] || nodeOf[q] === n) continue;
+          if (nodeOf[q] >= 0) {
+            const key = Math.min(n, nodeOf[q]) + ":" + Math.max(n, nodeOf[q]);
+            if (!directPairs.has(key)) { directPairs.add(key); addEdge(n, nodeOf[q], []); }
+            continue;
+          }
+          if (visited[q]) continue;
+          const pts = [];
+          let prev = p, cur = q, end = -1;
+          for (;;) {
+            visited[cur] = 1; pts.push(cur % W, (cur / W) | 0);
+            let next = -1;
+            for (let j = 0; j < 8; j++) { const r = cur + off[j]; if (r !== prev && skel[r] && (nodeOf[r] >= 0 || !visited[r])) { next = r; if (nodeOf[r] >= 0) break; } }
+            if (next < 0) break;
+            if (nodeOf[next] >= 0) { end = nodeOf[next]; break; }
+            prev = cur; cur = next;
+          }
+          if (end >= 0) addEdge(n, end, pts);
+        }
+      }
+    }
+    for (const i of pixels) {
+      if (deg[i] !== 2 || visited[i] || nodeOf[i] >= 0) continue;
+      const pts = [];
+      let prev = -1, cur = i;
+      for (;;) {
+        visited[cur] = 1; pts.push(cur % W, (cur / W) | 0);
+        let next = -1;
+        for (let j = 0; j < 8; j++) { const r = cur + off[j]; if (r !== prev && skel[r] && !visited[r]) { next = r; break; } }
+        if (next < 0) break;
+        prev = cur; cur = next;
+      }
+      if (pts.length >= 6) g.loops.push(pts); else g.dots.push(i);
+    }
+    return g;
+  }
+
+  const edgePath = (g, e, fromSide = 0) => {
+    const E = g.edges[e], A = g.nodes[E.a], B = g.nodes[E.b];
+    const path = [A.x, A.y, ...E.pts, B.x, B.y];
+    return fromSide ? reversePts(path) : path;
+  };
+  const reversePts = (pts) => { const out = []; for (let i = pts.length - 2; i >= 0; i -= 2) out.push(pts[i], pts[i + 1]); return out; };
+  const pathLength = (p) => { let L = 0; for (let i = 2; i < p.length; i += 2) L += Math.hypot(p[i] - p[i - 2], p[i + 1] - p[i - 1]); return L; };
+  const dropEnd = (node, key) => { const i = node.ends.indexOf(key); if (i >= 0) node.ends.splice(i, 1); };
+  const killEdge = (g, e) => { const E = g.edges[e]; E.alive = false; dropEnd(g.nodes[E.a], e * 2); dropEnd(g.nodes[E.b], e * 2 + 1); };
+  const swapEnd = (node, from, to) => { const i = node.ends.indexOf(from); if (i >= 0) node.ends[i] = to; };
+
+  function reverseEdge(g, e) {
+    const E = g.edges[e];
+    if (E.a !== E.b) { swapEnd(g.nodes[E.a], e * 2, -1); swapEnd(g.nodes[E.b], e * 2 + 1, e * 2); swapEnd(g.nodes[E.a], -1, e * 2 + 1); }
+    [E.a, E.b] = [E.b, E.a];
+    E.pts = reversePts(E.pts);
+  }
+
+  // Point `reach` px along the branch that leaves its node through edge end `key`.
+  function branchPoint(g, key, reach) {
+    const path = edgePath(g, key >> 1, key & 1);
+    let L = 0, px = path[0], py = path[1];
+    for (let i = 2; i < path.length; i += 2) {
+      L += Math.hypot(path[i] - path[i - 2], path[i + 1] - path[i - 1]);
+      px = path[i]; py = path[i + 1];
+      if (L >= reach) break;
+    }
+    return [px, py];
+  }
+  const direction = (from, to) => { const dx = to[0] - from[0], dy = to[1] - from[1], len = Math.hypot(dx, dy) || 1; return [dx / len, dy / len]; };
+  const bendAngle = (u, v) => Math.acos(clamp(-(u[0] * v[0] + u[1] * v[1]), -1, 1));  // 0 = straight on
+  const branchReach = (node) => Math.max(3, 1.5 * node.r + 3);
+
+  // Thinning splits an oblique X into two 3-way nodes joined by a short edge. They are one crossing
+  // when neither node continues straight on its own (unlike a ladder rung or two T-joints) but
+  // both outer branch pairs continue straight across the edge.
+  function isSplitCrossing(g, e) {
+    const E = g.edges[e], A = g.nodes[E.a], B = g.nodes[E.b];
+    if (E.a === E.b || A.ends.length !== 3 || B.ends.length !== 3) return false;
+    const outerA = A.ends.filter((k) => k >> 1 !== e), outerB = B.ends.filter((k) => k >> 1 !== e);
+    if (outerA.length !== 2 || outerB.length !== 2) return false;
+    const own = (node, keys) => keys.map((k) => direction([node.x, node.y], branchPoint(g, k, branchReach(node))));
+    const [a0, a1] = own(A, outerA), [b0, b1] = own(B, outerB);
+    if (bendAngle(a0, a1) <= MAX_PAIR_ANGLE || bendAngle(b0, b1) <= MAX_PAIR_ANGLE) return false;
+    const mid = [(A.x + B.x) / 2, (A.y + B.y) / 2];
+    const [p0, p1] = outerA.map((k) => direction(mid, branchPoint(g, k, branchReach(A))));
+    const [q0, q1] = outerB.map((k) => direction(mid, branchPoint(g, k, branchReach(B))));
+    const ok = (u, v) => bendAngle(u, v) <= MAX_PAIR_ANGLE;
+    return (ok(p0, q0) && ok(p1, q1)) || (ok(p0, q1) && ok(p1, q0));
+  }
+
+  // Removes thinning artefacts: short spurs, split crossings, tiny loops, pass-through nodes.
+  function simplifyGraph(g) {
+    for (let round = 0; round < 8; round++) {
+      let changed = false;
+      for (let e = 0; e < g.edges.length; e++) {
+        const E = g.edges[e];
+        if (!E.alive || E.a === E.b) continue;
+        const A = g.nodes[E.a], B = g.nodes[E.b];
+        const tip = A.ends.length === 1 && B.ends.length >= 3 ? A : B.ends.length === 1 && A.ends.length >= 3 ? B : null;
+        if (!tip) continue;
+        const hub = tip === A ? B : A;
+        if (pathLength(edgePath(g, e)) < 1.2 * hub.r + 2) { killEdge(g, e); tip.alive = false; changed = true; }
+      }
+      for (let e = 0; e < g.edges.length; e++) {
+        const E = g.edges[e];
+        if (!E.alive) continue;
+        const A = g.nodes[E.a], B = g.nodes[E.b], len = pathLength(edgePath(g, e));
+        if (E.a === E.b) {
+          if (A.ends.length > 2 && len < 4 * A.r + 6) { killEdge(g, e); changed = true; }
+        } else if (A.ends.length >= 3 && B.ends.length >= 3 && (len < 0.8 * (A.r + B.r) + 1.5 || (len < 3 * (A.r + B.r) + 2 && isSplitCrossing(g, e)))) {
+          const [mx, my] = branchPoint(g, e * 2, len / 2);   // halfway along the joining line: stays on ink when it curves
+          killEdge(g, e);
+          // r stays the true junction radius (it scales every threshold); span only marks the merged area.
+          A.span = Math.max(A.span, B.span, len / 2 + Math.max(A.r, B.r));
+          A.x = mx; A.y = my; A.r = Math.max(A.r, B.r);
+          for (const key of B.ends) { const O = g.edges[key >> 1]; if (key & 1) O.b = E.a; else O.a = E.a; A.ends.push(key); }
+          B.ends = []; B.alive = false;
+          changed = true;
+        }
+      }
+      for (const N of g.nodes) {
+        if (!N.alive || N.ends.length !== 2) continue;
+        const [k1, k2] = N.ends;
+        if (k1 >> 1 === k2 >> 1) {
+          const E = g.edges[k1 >> 1];
+          g.loops.push([N.x, N.y, ...E.pts]);
+          E.alive = false; N.ends = []; N.alive = false; changed = true;
+          continue;
+        }
+        if ((k1 & 1) === 0) reverseEdge(g, k1 >> 1);
+        if ((N.ends[1] & 1) === 1) reverseEdge(g, N.ends[1] >> 1);
+        const e1 = N.ends[0] >> 1, e2 = N.ends[1] >> 1, E1 = g.edges[e1], E2 = g.edges[e2];
+        E1.pts = E1.pts.concat([N.x, N.y], E2.pts);
+        swapEnd(g.nodes[E2.b], e2 * 2 + 1, e1 * 2 + 1);
+        E1.b = E2.b;
+        E2.alive = false; N.ends = []; N.alive = false; changed = true;
+      }
+      if (!changed) break;
+    }
+  }
+
+  function bilinear(map, W, x, y) {
+    const x0 = Math.floor(x), y0 = Math.floor(y), tx = x - x0, ty = y - y0, i = y0 * W + x0;
+    return (map[i] * (1 - tx) + map[i + 1] * tx) * (1 - ty) + (map[i + W] * (1 - tx) + map[i + W + 1] * tx) * ty;
+  }
+
+  // Coverage profile across the line: ink mass (width x core), centroid offset, peak.
+  function crossProfile(cov, W, H, x, y, nx, ny, reach) {
+    let mass = 0, moment = 0, peak = 0;
+    for (const sign of [1, -1]) {
+      for (let t = sign > 0 ? 0 : 0.5; t <= reach; t += 0.5) {
+        const px = x + sign * t * nx, py = y + sign * t * ny;
+        if (px < 0 || py < 0 || px >= W - 1 || py >= H - 1) break;
+        const c = bilinear(cov, W, px, py);
+        if (c < 0.03 && t >= 1) break;
+        mass += c * 0.5; moment += sign * t * c * 0.5; peak = Math.max(peak, c);
+      }
+    }
+    return { mass, offset: mass > 0 ? moment / mass : 0, peak };
+  }
+
+  function gaussianSmooth(pts, closed, sigma) {
+    const n = pts.length / 2;
+    if (sigma < 0.3 || n < 3) return pts.slice();
+    const R = Math.ceil(2.5 * sigma), weights = [];
+    for (let j = 0; j <= R; j++) weights.push(Math.exp(-(j * j) / (2 * sigma * sigma)));
+    const out = new Array(pts.length);
+    for (let i = 0; i < n; i++) {
+      const rr = closed ? Math.min(R, Math.floor((n - 1) / 2)) : Math.min(R, i, n - 1 - i);
+      let sx = 0, sy = 0, sw = 0;
+      for (let j = -rr; j <= rr; j++) {
+        const k = closed ? (i + j + n) % n : i + j, w = weights[Math.abs(j)];
+        sx += pts[2 * k] * w; sy += pts[2 * k + 1] * w; sw += w;
+      }
+      out[2 * i] = sx / sw; out[2 * i + 1] = sy / sw;
+    }
+    return out;
+  }
+
+  // Ramer–Douglas–Peucker on the outline: a point stays if dropping it moves the centre line or
+  // either edge (half the width change) by more than epsilon. Returns kept point indices.
+  function simplifyIndices(pts, widths, epsilon) {
+    const n = pts.length / 2;
+    if (n <= 2) return Array.from({ length: n }, (_, i) => i);
+    const keep = new Uint8Array(n); keep[0] = keep[n - 1] = 1;
+    const stack = [[0, n - 1]];
+    while (stack.length) {
+      const [a, b] = stack.pop();
+      const ax = pts[2 * a], ay = pts[2 * a + 1], dx = pts[2 * b] - ax, dy = pts[2 * b + 1] - ay;
+      const len2 = dx * dx + dy * dy, len = Math.sqrt(len2);
+      let worst = -1, worstDist = epsilon;
+      for (let i = a + 1; i < b; i++) {
+        const px = pts[2 * i] - ax, py = pts[2 * i + 1] - ay;
+        const t = len2 > 1e-18 ? clamp((px * dx + py * dy) / len2, 0, 1) : (i - a) / (b - a);
+        const d = Math.max(len > 1e-9 ? Math.abs(px * dy - py * dx) / len : Math.hypot(px, py),
+          Math.abs(widths[i] - (widths[a] + (widths[b] - widths[a]) * t)) / 2);
+        if (d > worstDist) { worstDist = d; worst = i; }
+      }
+      if (worst >= 0) { keep[worst] = 1; stack.push([a, worst], [worst, b]); }
+    }
+    const out = [];
+    for (let i = 0; i < n; i++) if (keep[i]) out.push(i);
+    return out;
+  }
+
+  function vectorize(rgba, width, height, options = {}) {
+    if (!(width > 0 && height > 0) || rgba.length < width * height * 4) throw new Error("Invalid image data.");
+    const detail = clamp(Number(options.detail ?? 60), 0, 100) / 100;
+    const smoothSigma = 2.0 - 1.6 * detail;     // px along the line: this is what smooths
+    const epsilon = 0.4 - 0.3 * detail;         // px, RDP tolerance: only drops redundant points, larger values facet curves
+    const W = width + 2, H = height + 2, N = W * H;  // 1-px empty frame: lines may touch the image edge
+    let transparent = false;
+    for (let i = 3; i < width * height * 4; i += 4) if (rgba[i] < 250) { transparent = true; break; }
+    const bg = transparent ? null : borderColor(rgba, width, height);
+    const cov = new Float32Array(N);
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const s = (y * width + x) * 4;
+        cov[(y + 1) * W + x + 1] = transparent ? rgba[s + 3] / 255
+          : Math.max(Math.abs(rgba[s] - bg[0]), Math.abs(rgba[s + 1] - bg[1]), Math.abs(rgba[s + 2] - bg[2])) / 255;
+      }
+    }
+    const peak = maxFilter(cov, W, H, 2);
+    const ink = new Uint8Array(N);
+    for (let i = 0; i < N; i++) ink[i] = cov[i] >= MIN_COVERAGE && cov[i] >= 0.5 * peak[i] ? 1 : 0;
+    dropSmallComponents(ink, W, H, 1, MIN_SPECK_AREA);
+    dropSmallComponents(ink, W, H, 0, MAX_HOLE_AREA + 1);
+    const dist = distanceTransform(ink, W, H);
+    const skel = thin(ink, dist, W);
+    const g = buildGraph(skel, dist, W);
+    simplifyGraph(g);
+
+    const pixelColor = (x, y) => { const i = ((Math.round(y) - 1) * width + Math.round(x) - 1) * 4; return [rgba[i], rgba[i + 1], rgba[i + 2]]; };
+    const isCore = (x, y) => { const i = Math.round(y) * W + Math.round(x); return cov[i] >= 0.6 * peak[i]; };
+    const edgeColor = (pts) => {
+      const ch = [[], [], []];
+      for (let i = 0; i < pts.length; i += 2) if (isCore(pts[i], pts[i + 1])) pixelColor(pts[i], pts[i + 1]).forEach((v, c) => ch[c].push(v));
+      return ch[0].length ? ch.map((c) => quantile(c, 0.5)) : null;
+    };
+
+    // Pair the straightest same-coloured branches at each crossing so a drawn line stays one stroke.
+    const partner = new Int32Array(g.edges.length * 2).fill(-1);
+    const colors = g.edges.map((E) => (E.alive ? edgeColor(E.pts) : null));
+    for (const J of g.nodes) {
+      if (!J.alive || J.ends.length < 3) continue;
+      const dirs = J.ends.map((key) => direction([J.x, J.y], branchPoint(g, key, branchReach(J))));
+      const pairs = [];
+      for (let i = 0; i < J.ends.length; i++) for (let j = i + 1; j < J.ends.length; j++) {
+        const bend = bendAngle(dirs[i], dirs[j]);
+        const ca = colors[J.ends[i] >> 1], cb = colors[J.ends[j] >> 1];
+        const colorOk = !ca || !cb || Math.max(...ca.map((v, c) => Math.abs(v - cb[c]))) <= MAX_PAIR_COLOR;
+        if (bend <= MAX_PAIR_ANGLE && colorOk) pairs.push([bend, J.ends[i], J.ends[j]]);
+      }
+      pairs.sort((a, b) => a[0] - b[0]);
+      for (const [, a, b] of pairs) if (partner[a] < 0 && partner[b] < 0) { partner[a] = b; partner[b] = a; }
+    }
+
+    // Walk paired edges into strokes.
+    const used = new Uint8Array(g.edges.length);
+    const chains = [];
+    const walk = (startKey) => {
+      const pts = [], marks = [];
+      let key = startKey;
+      const startNode = g.nodes[key & 1 ? g.edges[key >> 1].b : g.edges[key >> 1].a];
+      pts.push(startNode.x, startNode.y);
+      if (startNode.ends.length > 1) marks.push(startNode);
+      let closed = false, endNode = startNode;
+      for (;;) {
+        const e = key >> 1;
+        used[e] = 1;
+        const path = edgePath(g, e, key & 1);
+        for (let i = 2; i < path.length; i++) pts.push(path[i]);
+        const E = g.edges[e];
+        endNode = g.nodes[key & 1 ? E.a : E.b];
+        if (endNode.ends.length > 1) marks.push(endNode);
+        const next = partner[key ^ 1];
+        if (next < 0) break;
+        if (used[next >> 1]) { closed = next === startKey; break; }
+        key = next;
+      }
+      chains.push({ pts, marks, closed, freeStart: startNode.ends.length === 1, freeEnd: !closed && endNode.ends.length === 1 });
+    };
+    for (let e = 0; e < g.edges.length; e++) {
+      if (!g.edges[e].alive) continue;
+      for (const side of [0, 1]) if (!used[e] && partner[e * 2 + side] < 0) walk(e * 2 + side);
+    }
+    for (let e = 0; e < g.edges.length; e++) if (g.edges[e].alive && !used[e]) walk(e * 2);
+    for (const pts of g.loops) chains.push({ pts: pts.concat(pts.slice(0, 2)), marks: [], closed: true, freeStart: false, freeEnd: false });
+
+    const strokes = [];
+    // A free skeleton end stops short of the drawn tip (about half the width, more on tapered ends).
+    // Move it so the pen's round cap ends where coverage falls below half the line's core coverage.
+    const fitTip = (pts, ws, level) => {
+      const m = pts.length / 2;
+      if (m < 2) return;
+      const ex = pts[2 * m - 2], ey = pts[2 * m - 1], r = ws[m - 1] / 2;
+      let k = m - 2;
+      for (let L = 0; k > 0; k--) {
+        L += Math.hypot(pts[2 * k + 2] - pts[2 * k], pts[2 * k + 3] - pts[2 * k + 1]);
+        if (L >= Math.max(2, 2 * r)) break;
+      }
+      const [ux, uy] = direction([pts[2 * k], pts[2 * k + 1]], [ex, ey]);
+      if (!ux && !uy) return;
+      let tip = r, prev = bilinear(cov, W, ex, ey);
+      if (prev < level) tip = 0;
+      else {
+        for (let t = 0.25; t <= 2 * r + 3; t += 0.25) {
+          const x = ex + ux * t, y = ey + uy * t;
+          if (x < 0 || y < 0 || x >= W - 1 || y >= H - 1) { tip = t; break; }
+          const c = bilinear(cov, W, x, y);
+          if (c < level) { tip = t - 0.25 + 0.25 * (prev - level) / (prev - c); break; }
+          prev = c;
+        }
+      }
+      const shift = tip - r;
+      if (shift >= 0) { pts[2 * m - 2] = ex + ux * shift; pts[2 * m - 1] = ey + uy * shift; return; }
+      let budget = Math.min(-shift, pathLength(pts) / 2);
+      while (budget > 1e-9 && pts.length > 4) {
+        const ax = pts[pts.length - 4], ay = pts[pts.length - 3], bx = pts[pts.length - 2], by = pts[pts.length - 1];
+        const seg = Math.hypot(bx - ax, by - ay);
+        if (seg > budget) { pts[pts.length - 2] = bx + (ax - bx) * budget / seg; pts[pts.length - 1] = by + (ay - by) * budget / seg; break; }
+        budget -= seg; pts.length -= 2; ws.length -= 1;
+      }
+    };
+
+    const finish = (chain) => {
+      const raw = chain.pts, n = raw.length / 2;
+      const at = (i) => Math.round(raw[2 * i + 1]) * W + Math.round(raw[2 * i]);
+      const flagged = new Uint8Array(n);
+      for (const m of chain.marks) for (let i = 0; i < n; i++) if (Math.hypot(raw[2 * i] - m.x, raw[2 * i + 1] - m.y) < m.span + 2) flagged[i] = 1;
+      // Cross-sections away from junctions: ink mass across the line (= width x core) and its centroid.
+      const guide = gaussianSmooth(raw, false, 1.5);
+      const mass = new Float64Array(n), peaks = [], measured = [], refined = raw.slice();
+      for (let i = 0; i < n; i++) {
+        if (flagged[i]) continue;
+        const a = Math.max(0, i - 2), b = Math.min(n - 1, i + 2);
+        const [tx, ty] = direction([guide[2 * a], guide[2 * a + 1]], [guide[2 * b], guide[2 * b + 1]]);
+        if (!tx && !ty) continue;
+        const x = raw[2 * i], y = raw[2 * i + 1];
+        const pr = crossProfile(cov, W, H, x, y, -ty, tx, dist[at(i)] + 2.5);
+        if (pr.mass <= 0) continue;
+        measured.push(i); mass[i] = pr.mass; peaks.push(pr.peak);
+        const shift = clamp(pr.offset, -1.5, 1.5);
+        refined[2 * i] = x - ty * shift; refined[2 * i + 1] = y + tx * shift;
+      }
+      // Near a junction the skeleton bends towards the other branches: run the line straight across,
+      // unless that cut would leave the ink (the line itself bends inside the junction).
+      const onInk = (a, b) => {
+        const ax = refined[2 * a], ay = refined[2 * a + 1], bx = refined[2 * b], by = refined[2 * b + 1];
+        const steps = Math.ceil(Math.hypot(bx - ax, by - ay));
+        for (let k = 1; k < steps; k++) if (!ink[Math.round(ay + (by - ay) * k / steps) * W + Math.round(ax + (bx - ax) * k / steps)]) return false;
+        return true;
+      };
+      for (let i = 0, prev = -1; i < n; i++) {
+        if (flagged[i] && i > 0 && i < n - 1) continue;
+        if (prev >= 0 && i - prev > 1 && onInk(prev, i)) {
+          for (let k = prev + 1; k < i; k++) {
+            const t = (k - prev) / (i - prev);
+            refined[2 * k] = refined[2 * prev] + (refined[2 * i] - refined[2 * prev]) * t;
+            refined[2 * k + 1] = refined[2 * prev + 1] + (refined[2 * i + 1] - refined[2 * prev + 1]) * t;
+          }
+        }
+        prev = i;
+      }
+      // Core coverage = how opaque the line is (semi-transparent ink stays below 1).
+      let core = peaks.length ? quantile(peaks, 0.9) : 0;
+      if (core < 0.05) {
+        for (let i = 0; i < n; i++) core = Math.max(core, peak[at(i)]);
+        core = Math.max(0.05, core);
+      }
+      // Width = mass / core; points without a clean cross-section take it from measured neighbours.
+      let widths = new Array(n);
+      if (!measured.length) {
+        let d = 0;
+        for (let i = 0; i < n; i++) d = Math.max(d, dist[at(i)]);
+        widths.fill(Math.max(1, 2 * d - 1));
+      } else {
+        for (let i = 0, j = 0; i < n; i++) {
+          while (j < measured.length - 1 && measured[j + 1] <= i) j++;
+          const l = measured[j], r = measured[Math.min(j + 1, measured.length - 1)];
+          widths[i] = (i <= l || l === r ? mass[l] : mass[l] + (mass[r] - mass[l]) * (i - l) / (r - l)) / core;
+        }
+      }
+      widths = widths.map((_, i) => {
+        const win = [];
+        for (let j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 3); j++) win.push(widths[j]);
+        return quantile(win, 0.5);
+      });
+      // Even lines get one exact width (drawn at full pressure); real taper keeps its profile.
+      const sample = measured.map((i) => widths[i]);
+      if (sample.length && quantile(sample, 0.9) <= 1.3 * quantile(sample, 0.1)) widths.fill(quantile(sample, 0.5));
+      // Closed lines are smoothed as rings (last point repeats the first) so the seam is not pinned.
+      let pts = chain.closed && n > 3
+        ? (() => { const ring = gaussianSmooth(refined.slice(0, -2), true, smoothSigma); return ring.concat(ring.slice(0, 2)); })()
+        : gaussianSmooth(refined, false, smoothSigma);
+      if (!chain.closed) {
+        if (chain.freeEnd) fitTip(pts, widths, 0.5 * core);
+        if (chain.freeStart) {
+          pts = reversePts(pts);
+          widths.reverse();
+          fitTip(pts, widths, 0.5 * core);
+          pts = reversePts(pts);
+          widths.reverse();
+        }
+      }
+      const kept = simplifyIndices(pts, widths, epsilon);
+      const ch = [[], [], []];
+      for (let i = 0; i < n; i++) if (!flagged[i] && isCore(raw[2 * i], raw[2 * i + 1])) pixelColor(raw[2 * i], raw[2 * i + 1]).forEach((v, c) => ch[c].push(v));
+      if (!ch[0].length) for (let i = 0; i < n; i++) pixelColor(raw[2 * i], raw[2 * i + 1]).forEach((v, c) => ch[c].push(v));
+      const alpha = transparent ? (core >= 0.9 ? 255 : Math.max(1, Math.round(core * 255))) : 255;
+      strokes.push({
+        points: kept.map((i) => [pts[2 * i] - 0.5, pts[2 * i + 1] - 0.5]),
+        widths: kept.map((i) => Math.max(0.5, widths[i])),
+        color: (((alpha << 24) | (quantile(ch[0], 0.5) << 16) | (quantile(ch[1], 0.5) << 8) | quantile(ch[2], 0.5)) >>> 0),
+        closed: chain.closed,
+      });
+    };
+    for (const chain of chains) if (chain.pts.length >= 4) finish(chain);
+    for (const i of g.dots) {
+      const x = i % W, y = (i / W) | 0;
+      const pr = crossProfile(cov, W, H, x, y, 1, 0, dist[i] + 2.5);
+      const core = Math.max(0.05, peak[i]);
+      const [r, gg, b] = pixelColor(x, y);
+      const alpha = transparent ? (core >= 0.9 ? 255 : Math.max(1, Math.round(core * 255))) : 255;
+      strokes.push({ points: [[x - 0.5, y - 0.5]], widths: [Math.max(1, pr.mass / core)], color: ((alpha << 24) | (r << 16) | (gg << 8) | b) >>> 0, closed: false });
+    }
+    return { strokes, width, height, transparent };
+  }
+
+  // ======================================================================
+  // Page layout: image pixels -> Samsung Notes page units
+  // ======================================================================
+  const MAX_SEGMENT = 2;        // page units between stored points (S Pen strokes: ~1)
+  const MIN_PEN_SIZE = 0.3;
+  const MAX_PEN_SIZE = 100;
+  const MAX_STROKE_POINTS = 65535;
+  const MAX_STROKES = 20000;    // far beyond line art; photos and shading trace into noise
+
+  function pageGeometry(imageWidth, imageHeight, marginPercent) {
+    // Standard Samsung Notes page (720 x 1018 portrait); landscape artwork gets the page rotated.
+    const landscape = imageWidth > imageHeight;
+    const pageWidth = landscape ? 1018 : 720;
+    const pageHeight = landscape ? 720 : 1018;
+    const margin = Math.round(Math.min(pageWidth, pageHeight) * clamp(Number(marginPercent) || 0, 0, 50) / 100);
+    const scale = Math.min(Math.max(1, pageWidth - margin * 2) / imageWidth, Math.max(1, pageHeight - margin * 2) / imageHeight);
+    const left = (pageWidth - imageWidth * scale) / 2;
+    const top = (pageHeight - imageHeight * scale) / 2;
+    return { width: pageWidth, height: pageHeight, scale, rect: [left, top, left + imageWidth * scale, top + imageHeight * scale] };
+  }
+
+  // Pen size carries the line width; pressure (0..1 of the size) only carries tapering.
+  function layoutStrokes(traced, geometry) {
+    const [left, top] = geometry.rect, scale = geometry.scale;
+    const out = [];
+    for (const s of traced.strokes) {
+      let pts = s.points.map(([x, y]) => [left + x * scale, top + y * scale]);
+      let widths = s.widths.map((w) => w * scale);
+      if (pts.length === 1) { pts = [pts[0], [pts[0][0] + 0.0625, pts[0][1]]]; widths = [widths[0], widths[0]]; }
+      const densePts = [pts[0]], denseWidths = [widths[0]];
+      for (let i = 1; i < pts.length; i++) {
+        const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
+        const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / MAX_SEGMENT));
+        for (let k = 1; k <= steps; k++) {
+          const t = k / steps;
+          densePts.push([ax + (bx - ax) * t, ay + (by - ay) * t]);
+          denseWidths.push(widths[i - 1] + (widths[i] - widths[i - 1]) * t);
+        }
+      }
+      const low = quantile(denseWidths, 0.1), high = quantile(denseWidths, 0.9);
+      const uniform = high <= 1.3 * low;
+      const size = clamp(uniform ? quantile(denseWidths, 0.5) : quantile(denseWidths, 0.95), MIN_PEN_SIZE, MAX_PEN_SIZE);
+      const pressures = denseWidths.map((w) => (uniform ? 1 : clamp(w / size, 0.05, 1)));
+      for (let start = 0; start < densePts.length - 1; start += MAX_STROKE_POINTS - 1) {
+        const end = Math.min(densePts.length, start + MAX_STROKE_POINTS);
+        out.push({ points: densePts.slice(start, end), pressures: pressures.slice(start, end), size, color: s.color });
+      }
+    }
+    return out;
+  }
+
+  // ======================================================================
+  // SDOCX writer (layout documented in FORMAT.md)
+  // ======================================================================
+  const PAGE_FOOTER = new TextEncoder().encode("Page for SAMSUNG S-Pen SDK");
+  const END_TAG_FOOTER = new TextEncoder().encode("Document for S-Pen SDK");
+  const UUID_EPOCH = 0x01B21DD213814000n;
+  const FORMAT_VERSION = 4000;
+  const BLANK_PAGE_WIDTH = 720;
+  const BLANK_PAGE_HEIGHT = 1018;
+  const NOTE_VERTICAL_PADDING = 16;
+  const NOTE_HEADER_FLAGS = 0x00000008;
+  const NOTE_PROPERTY_FLAGS = 0x000C8E80;
+  const MEDIA_INFO_VERSION = 5500;
+  const PEN_NAME = "com.samsung.android.sdk.pen.pen.preload.InkPen2";
+  const PEN_NAME_ID = 0;
+  const PEN_ADVANCED_SETTING = "9;";
+  const PEN_ADVANCED_SETTING_ID = 1;
+  const STROKE_MASK1 = 0x0425;         // compact points + tilt/orientation arrays
+  const STROKE_FLEX_MASK = 0x258E;     // adv. setting, colour, size, pen name, 0x100, 0x400, 0x2000
+  const INKPEN_FLEX_2000 = 0.33;
+  const PEN_TILT = 0.506;              // typical S Pen tilt/orientation in the sample notes
+  const PEN_ORIENTATION = -1.571;
+  const PEN_SPEED = 0.5;               // page units per ms, like hand-drawn strokes
+  const STROKE_GAP_MS = 150;
+
+  function decodeBase64(value) {
+    const raw = atob(value.replace(/\s/g, ""));
+    const out = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) out[i] = raw.charCodeAt(i);
+    return out;
+  }
+
+  // Byte-exact pieces of the title/body text objects and pen info from Samsung Notes samples.
+  const TEXT_BASE_PREFIX = decodeBase64("aQAAAAAAAAAAAAK/AQQAAAAAoA8AACQA");
+  const TEXT_SHAPE_BASE = decodeBase64("QgAAAAYAGwAAAAEAAQwAAAAABAAAAAAAAAAAEwAAAAEAAgAAAP8AAAAAAAAAAAAAAAAMAAAAAAAAAAAAAAAAAAAA");
+  const TITLE_SHAPE_HEADER = decodeBase64("hwAAAAcAPgAAAAEEBAEAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=");
+  const BODY_SHAPE_TEXT = decodeBase64(
+    "xAAAAAcAPgAAAAEEBAEgAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAACBAAAAAAAAAAIAAAAYAAMAAAAA" +
+    "AAAAAAAAAAEAAAAAAHBBAAAAABgAAQAAAAAAAAAAAAAAAQAAACUlJf8AAAAAAQAAABQAAwAAAAAAAAABAAAAAAAAAAAAAAAAAIBBAAAgQQAA" +
+    "gEEAACBBAAIA/////wEAAAAAAAAAAAAAAAAAAAAAAAAAAg=="
+  );
+  const TEXT_OBJECT_TRAILER = decodeBase64("DwAAAAIAAAAAAAEAAgAA");
+  const CURRENT_PEN_INFO = decodeBase64(
+    "zgAAAC8AYwBvAG0ALgBzAGEAbQBzAHUAbgBnAC4AYQBuAGQAcgBvAGkAZAAuAHMAZABrAC4AcABlAG4ALgBwAGUAbgAuAHAAcgBlAGwAbwBh" +
+    "AGQALgBJAG4AawBQAGUAbgAyAKIjgT8AAAD/AQAAAAAAAAAAAAUAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABAAAAAAAAAAAAAAAIA/" +
+    "AAAAAAAAAAAAAAAAAAAAAAAAAAAFAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+  );
+
+  class Writer {
+    constructor() { this.data = []; }
+    bytes(value) { for (const byte of value) this.data.push(byte & 255); return this; }
+    zeros(count) { for (let i = 0; i < count; i++) this.data.push(0); return this; }
+    u8(value) { this.data.push(Number(value) & 255); return this; }
+    u16(value) { value = Number(value) >>> 0; this.data.push(value & 255, (value >>> 8) & 255); return this; }
+    u32(value) { value = Number(value) >>> 0; this.data.push(value & 255, (value >>> 8) & 255, (value >>> 16) & 255, (value >>> 24) & 255); return this; }
+    i32(value) { return this.u32(Number(value) >>> 0); }
+    u64(value) {
+      let v = BigInt(value);
+      for (let i = 0; i < 8; i++) { this.data.push(Number(v & 255n)); v >>= 8n; }
+      return this;
+    }
+    i64(value) { return this.u64(BigInt.asUintN(64, BigInt(value))); }
+    f32(value) {
+      const b = new ArrayBuffer(4); new DataView(b).setFloat32(0, Number(value), true);
+      return this.bytes(new Uint8Array(b));
+    }
+    f64(value) {
+      const b = new ArrayBuffer(8); new DataView(b).setFloat64(0, Number(value), true);
+      return this.bytes(new Uint8Array(b));
+    }
+    utf16u16(value) {
+      const text = String(value ?? "");
+      this.u16(text.length);
+      for (let i = 0; i < text.length; i++) this.u16(text.charCodeAt(i));
+      return this;
+    }
+    utf16u32Nullable(value) {
+      if (value === null || value === undefined) return this.u32(0xFFFFFFFF);
+      const text = String(value);
+      this.u32(text.length);
+      for (let i = 0; i < text.length; i++) this.u16(text.charCodeAt(i));
+      return this;
+    }
+    toBytes() { return Uint8Array.from(this.data); }
+  }
+
+  function concatBytes(...arrays) {
+    const length = arrays.reduce((sum, item) => sum + item.length, 0);
+    const out = new Uint8Array(length);
+    let offset = 0;
+    for (const item of arrays) { out.set(item, offset); offset += item.length; }
+    return out;
+  }
+
+  // Small SHA-256 implementation keeps the page fully self-contained (no WebCrypto dependency).
+  function sha256(message) {
+    const K = [
+      0x428a2f98,0x71374491,0xb5c0fbcf,0xe9b5dba5,0x3956c25b,0x59f111f1,0x923f82a4,0xab1c5ed5,
+      0xd807aa98,0x12835b01,0x243185be,0x550c7dc3,0x72be5d74,0x80deb1fe,0x9bdc06a7,0xc19bf174,
+      0xe49b69c1,0xefbe4786,0x0fc19dc6,0x240ca1cc,0x2de92c6f,0x4a7484aa,0x5cb0a9dc,0x76f988da,
+      0x983e5152,0xa831c66d,0xb00327c8,0xbf597fc7,0xc6e00bf3,0xd5a79147,0x06ca6351,0x14292967,
+      0x27b70a85,0x2e1b2138,0x4d2c6dfc,0x53380d13,0x650a7354,0x766a0abb,0x81c2c92e,0x92722c85,
+      0xa2bfe8a1,0xa81a664b,0xc24b8b70,0xc76c51a3,0xd192e819,0xd6990624,0xf40e3585,0x106aa070,
+      0x19a4c116,0x1e376c08,0x2748774c,0x34b0bcb5,0x391c0cb3,0x4ed8aa4a,0x5b9cca4f,0x682e6ff3,
+      0x748f82ee,0x78a5636f,0x84c87814,0x8cc70208,0x90befffa,0xa4506ceb,0xbef9a3f7,0xc67178f2
+    ];
+    const H = [0x6a09e667,0xbb67ae85,0x3c6ef372,0xa54ff53a,0x510e527f,0x9b05688c,0x1f83d9ab,0x5be0cd19];
+    const bitLength = BigInt(message.length) * 8n;
+    const paddedLength = Math.ceil((message.length + 9) / 64) * 64;
+    const padded = new Uint8Array(paddedLength);
+    padded.set(message); padded[message.length] = 0x80;
+    for (let i = 0; i < 8; i++) padded[paddedLength - 1 - i] = Number((bitLength >> BigInt(i * 8)) & 255n);
+    const rotr = (x, n) => (x >>> n) | (x << (32 - n));
+    const w = new Uint32Array(64);
+    for (let offset = 0; offset < padded.length; offset += 64) {
+      for (let i = 0; i < 16; i++) {
+        const p = offset + i * 4;
+        w[i] = ((padded[p] << 24) | (padded[p+1] << 16) | (padded[p+2] << 8) | padded[p+3]) >>> 0;
+      }
+      for (let i = 16; i < 64; i++) {
+        const x = w[i-15], y = w[i-2];
+        const s0 = rotr(x,7) ^ rotr(x,18) ^ (x >>> 3);
+        const s1 = rotr(y,17) ^ rotr(y,19) ^ (y >>> 10);
+        w[i] = (w[i-16] + s0 + w[i-7] + s1) >>> 0;
+      }
+      let [a,b,c,d,e,f,g,h] = H;
+      for (let i = 0; i < 64; i++) {
+        const S1 = rotr(e,6) ^ rotr(e,11) ^ rotr(e,25);
+        const ch = (e & f) ^ (~e & g);
+        const t1 = (h + S1 + ch + K[i] + w[i]) >>> 0;
+        const S0 = rotr(a,2) ^ rotr(a,13) ^ rotr(a,22);
+        const maj = (a & b) ^ (a & c) ^ (b & c);
+        const t2 = (S0 + maj) >>> 0;
+        h=g; g=f; f=e; e=(d+t1)>>>0; d=c; c=b; b=a; a=(t1+t2)>>>0;
+      }
+      H[0]=(H[0]+a)>>>0; H[1]=(H[1]+b)>>>0; H[2]=(H[2]+c)>>>0; H[3]=(H[3]+d)>>>0;
+      H[4]=(H[4]+e)>>>0; H[5]=(H[5]+f)>>>0; H[6]=(H[6]+g)>>>0; H[7]=(H[7]+h)>>>0;
+    }
+    const out = new Uint8Array(32);
+    for (let i = 0; i < 8; i++) {
+      out[i*4] = H[i] >>> 24; out[i*4+1] = H[i] >>> 16;
+      out[i*4+2] = H[i] >>> 8; out[i*4+3] = H[i];
+    }
+    return out;
+  }
+
+  function utf8(value) { return new TextEncoder().encode(String(value)); }
+  // Object/layer/page checksums hash the id followed by the decimal timestamp (verified on samples).
+  function identityHash(identifier, time) { return sha256(utf8(String(identifier) + String(time))); }
+
+  // Time-based UUID like Samsung's ids; `micros` is the event time in microseconds.
+  function makeUuidV1(micros) {
+    const ticks = BigInt(micros) * 10n + UUID_EPOCH + BigInt(Math.floor(Math.random() * 10));
+    const timeLow = Number(ticks & 0xFFFFFFFFn) >>> 0;
+    const timeMid = Number((ticks >> 32n) & 0xFFFFn);
+    const timeHi = Number((ticks >> 48n) & 0x0FFFn) | 0x1000;
+    const clock = Math.floor(Math.random() * 0x3FFF) | 0x8000;
+    const node = new Uint8Array(6);
+    if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(node);
+    else for (let i = 0; i < 6; i++) node[i] = Math.floor(Math.random() * 256);
+    node[0] |= 1;
+    const hex = (n, size) => n.toString(16).padStart(size, "0");
+    return `${hex(timeLow,8)}-${hex(timeMid,4)}-${hex(timeHi,4)}-${hex(clock,4)}-${Array.from(node, b => hex(b,2)).join("")}`;
+  }
+
+  function patchU32(array, offset, value) {
+    const view = new DataView(array.buffer, array.byteOffset, array.byteLength);
+    view.setUint32(offset, Number(value) >>> 0, true);
+  }
+
+  // Packed delta: bit 15 sign, bits 14..0 magnitude in 1/32 units.
+  function packDelta(value) {
+    const magnitude = Math.min(0x7FFF, Math.round(Math.abs(value) * 32));
+    return { code: (value < 0 ? 0x8000 : 0) | magnitude, value: (value < 0 ? -magnitude : magnitude) / 32 };
+  }
+
+  // One InkPen2 stroke object (type 1): base record + compact stroke record, FORMAT.md §4.
+  function packStrokeObject(stroke, objectId, saveTime, penDownMicros, pageWidth, pageHeight) {
+    const points = stroke.points, n = points.length;
+    if (n < 2 || n > MAX_STROKE_POINTS) throw new Error(`Stroke has ${n} points.`);
+    const geometry = new Writer();
+    let qx = points[0][0], qy = points[0][1];
+    let minX = qx, minY = qy, maxX = qx, maxY = qy;
+    geometry.f64(qx).f64(qy);
+    const decoded = [[qx, qy]];
+    for (let i = 1; i < n; i++) {
+      const dx = packDelta(points[i][0] - qx), dy = packDelta(points[i][1] - qy);
+      geometry.u16(dx.code).u16(dy.code);
+      qx += dx.value; qy += dy.value;
+      decoded.push([qx, qy]);
+      minX = Math.min(minX, qx); maxX = Math.max(maxX, qx); minY = Math.min(minY, qy); maxY = Math.max(maxY, qy);
+    }
+    // Pressure deltas are 1/4096 steps; error feedback keeps every decoded value within [0, 1].
+    let qp = Math.fround(clamp(stroke.pressures[0], 0, 1));
+    geometry.f32(qp);
+    for (let i = 1; i < n; i++) {
+      const steps = clamp(Math.round((clamp(stroke.pressures[i], 0, 1) - qp) * 4096), Math.ceil(-qp * 4096), Math.floor((1 - qp) * 4096));
+      geometry.u16((steps < 0 ? 0x8000 : 0) | Math.min(0x7FFF, Math.abs(steps)));
+      qp += steps / 4096;
+    }
+    geometry.i32(0);
+    let duration = 0;
+    for (let i = 1; i < n; i++) {
+      const dt = clamp(Math.round(Math.hypot(decoded[i][0] - decoded[i - 1][0], decoded[i][1] - decoded[i - 1][1]) / PEN_SPEED), 1, 0xFFFF);
+      geometry.u16(dt);
+      duration += dt;
+    }
+    geometry.f32(PEN_TILT); for (let i = 1; i < n; i++) geometry.u16(0);
+    geometry.f32(PEN_ORIENTATION); for (let i = 1; i < n; i++) geometry.u16(0);
+    geometry.u16(2);
+    const geometryBytes = geometry.toBytes();
+    const flexible = new Writer();
+    flexible.u32(PEN_ADVANCED_SETTING_ID).u32(stroke.color).f32(stroke.size).u32(PEN_NAME_ID).f32(stroke.size).u32(1).f32(INKPEN_FLEX_2000);
+    const flexibleBytes = flexible.toBytes();
+    const flexibleOffset = 20 + geometryBytes.length;
+    const own = new Writer();
+    own.u32(flexibleOffset + flexibleBytes.length).u16(1).u32(flexibleOffset)
+      .u8(2).u16(STROKE_MASK1).u8(4).u32(STROKE_FLEX_MASK).u16(n)
+      .bytes(geometryBytes).bytes(flexibleBytes);
+    const rect = [minX, minY, maxX, maxY];
+    const base = new Writer();
+    base.u32(121).u16(0).u32(105).u8(2).u16(0x01BF).u8(4).u32(0x6000).u32(FORMAT_VERSION)
+      .u16(36).bytes(utf8(objectId)).u64(saveTime);
+    rect.forEach((v) => base.f64(v));
+    base.u32(0).u8(0).u64(penDownMicros + BigInt(duration) * 1000n).u32(pageWidth).u32(pageHeight);
+    const payload = concatBytes(base.toBytes(), own.toBytes());
+    const hash = identityHash(objectId, saveTime);
+    const object = new Writer();
+    object.u8(1).u16(0).u32(payload.length + 32).bytes(payload).bytes(hash);
+    return { data: object.toBytes(), hash, id: objectId, rect, size: stroke.size, color: stroke.color, pointCount: n, durationMs: duration };
+  }
+
+  function buildLayerSection(objects, layerOffset, now) {
+    const layerId = makeUuidV1(now);
+    const extra = new Writer();
+    extra.utf16u16(layerId).u64(now);
+    const extraBytes = extra.toBytes();
+    const layer = new Writer();
+    layer.u16(1).u16(0);
+    layer.u32(16 + extraBytes.length).u32(layerOffset + 4 + 16).bytes([1, 2, 1, 0x18]).u32(0).bytes(extraBytes).u32(objects.length);
+    for (const obj of objects) layer.bytes(obj.data);
+    const hashInput = new Uint8Array(objects.length * 32 + 32);   // object hashes, then the layer identity
+    objects.forEach((o, i) => hashInput.set(o.hash, i * 32));
+    hashInput.set(identityHash(layerId, now), objects.length * 32);
+    const layerHash = sha256(hashInput);
+    layer.bytes(layerHash);
+    return { data: layer.toBytes(), hash: layerHash };
+  }
+
+  function buildPage(pageId, width, height, background, objects, now) {
+    const propertyOffset = 0x80;
+    let drawnRect = null;
+    for (const o of objects) {
+      // Samsung pads the drawn area by half the InkPen2 size plus 4 units (matches all sample pages).
+      const pad = o.size / 2 + 4;
+      const r = [o.rect[0] - pad, o.rect[1] - pad, o.rect[2] + pad, o.rect[3] + pad];
+      drawnRect = drawnRect ? [Math.min(drawnRect[0], r[0]), Math.min(drawnRect[1], r[1]), Math.max(drawnRect[2], r[2]), Math.max(drawnRect[3], r[3])] : r;
+    }
+    const propertyMask = 0x70 | (drawnRect ? 0x01 : 0);
+    const page = new Writer();
+    page.zeros(18).u32(0).u32(width).u32(height).u32(0).u32(0).utf16u16(pageId).u64(now).u32(FORMAT_VERSION).u32(FORMAT_VERSION);
+    page.zeros(propertyOffset - page.data.length);
+    if (drawnRect) drawnRect.forEach((v) => page.f64(v));
+    page.u32(2).u32(background).u32(width);
+    const layerOffset = page.data.length;
+    const layer = buildLayerSection(objects, layerOffset, now);
+    page.bytes(layer.data);
+    const pageBytes = page.toBytes();
+    patchU32(pageBytes, 0, layerOffset);
+    patchU32(pageBytes, 4, propertyOffset);
+    pageBytes[8] = 0x04;
+    patchU32(pageBytes, 9, 0);
+    pageBytes[13] = 0x04;
+    patchU32(pageBytes, 14, propertyMask);
+    const pageHash = sha256(concatBytes(layer.hash, identityHash(pageId, now)));
+    return { id: pageId, data: concatBytes(pageBytes, pageHash, PAGE_FOOTER), hash: pageHash, width, height, drawnRect };
+  }
+
+  function buildTitleTextCommon(title) {
+    const text = Array.from(String(title || "")).slice(0, 240).join("");
+    const w = new Writer();
+    w.u32(text.length);
+    for (let i = 0; i < text.length; i++) w.u16(text.charCodeAt(i));
+    w.u32(0);
+    if (text) w.u32(1).u16(20).u32(6).u32(0).u32(1).u32(0).u32(0);
+    else w.u32(0);
+    [0, 7.5, 0, 7.5].forEach((v) => w.f32(v));
+    w.u8(0).u16(0).u32(0).u32(0);
+    return w.toBytes();
+  }
+
+  function buildTextObject(objectId, time, shapeText) {
+    const base = new Writer();
+    base.bytes(TEXT_BASE_PREFIX).bytes(utf8(objectId)).u64(time).zeros(37);
+    return concatBytes(base.toBytes(), TEXT_SHAPE_BASE, shapeText, TEXT_OBJECT_TRAILER);
+  }
+
+  function buildTitleShape(title) {
+    const common = buildTitleTextCommon(title);
+    const head = TITLE_SHAPE_HEADER.slice();
+    patchU32(head, 0, head.length + 4 + common.length);
+    const w = new Writer();
+    w.bytes(head).u32(common.length).bytes(common);
+    return w.toBytes();
+  }
+
+  function buildStringIdBlock(entries) {
+    const body = new Writer();
+    body.u16(entries.length);
+    for (const [id, value] of entries) body.i32(id).utf16u16(value);
+    const bytes = body.toBytes();
+    const w = new Writer(); w.u32(bytes.length).bytes(bytes); return w.toBytes();
+  }
+
+  function buildNoteFile(title, pages, now) {
+    const width = Math.max(...pages.map((page) => page.width));
+    const height = pages.reduce((sum, page) => sum + page.height, 0) + NOTE_VERTICAL_PADDING;
+    const titleObject = buildTextObject(makeUuidV1(now), now, buildTitleShape(title));
+    const bodyObject = buildTextObject(makeUuidV1(now), now, BODY_SHAPE_TEXT);
+    const data = new Writer();
+    data.zeros(4).u8(4).u32(NOTE_HEADER_FLAGS).u8(4).u32(NOTE_PROPERTY_FLAGS).u32(FORMAT_VERSION).utf16u16("").u32(1);
+    data.u64(now).u64(now).u32(width).u32(height).u32(0).u32(NOTE_VERTICAL_PADDING).u32(FORMAT_VERSION);
+    data.u32(titleObject.length).bytes(titleObject).u32(bodyObject.length).bytes(bodyObject);
+    data.u32(pages[0].width).u32(pages[0].height);   // header flag 0x8: page size
+    const optionalOffset = data.data.length;
+    data.i32(0).i32(-1).u64(0)
+      .bytes(buildStringIdBlock([[PEN_ADVANCED_SETTING_ID, PEN_ADVANCED_SETTING], [PEN_NAME_ID, PEN_NAME]]))
+      .i32(0).bytes(CURRENT_PEN_INFO).i32(2).i32(2);
+    const full = data.toBytes();
+    patchU32(full, 0, optionalOffset);
+    const hash = sha256(full);
+    return { data: concatBytes(full, hash), hash };
+  }
+
+  function buildPageIdInfo(noteHash, pages) {
+    const w = new Writer();
+    w.bytes(noteHash.slice(0, 32)).u16(pages.length);
+    for (const page of pages) w.utf16u16(page.id).bytes(page.hash);
+    return w.toBytes();
+  }
+
+  function buildMediaInfo() {
+    const w = new Writer();
+    w.u32(MEDIA_INFO_VERSION).u16(0).bytes(utf8("EOFX"));
+    return w.toBytes();
+  }
+
+  // Samsung stores display times in microseconds in end_tag.bin and milliseconds in the copy after the ZIP.
+  function buildEndTag(width, height, now, displayTime) {
+    const payload = new Writer();
+    payload.i32(FORMAT_VERSION).utf16u16("").u64(now).i32(0).utf16u16("").i32(width).f32(height).utf16u16("");
+    payload.i32(-1).i32(-1).utf16u16("").i32(FORMAT_VERSION).u64(now).i32(0).u16(0).u16(0).utf16u16("");
+    payload.i32(0).i32(0).u64(displayTime).u64(displayTime).u64(0n).utf16u16("");
+    payload.i32(2).i32(2).i64(-1).i32(0).i32(0).utf16u32Nullable("").bytes(END_TAG_FOOTER);
+    const bytes = payload.toBytes();
+    const result = new Writer(); result.u16(bytes.length).bytes(bytes);
+    return result.toBytes();
+  }
+
+  // Classic ZIP writer, using uncompressed members to avoid any external library.
+  const CRC_TABLE = (() => {
+    const table = new Uint32Array(256);
+    for (let n=0;n<256;n++) { let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); table[n]=c>>>0; }
+    return table;
+  })();
+  function crc32(bytes) {
+    let crc = 0xFFFFFFFF;
+    for (const b of bytes) crc = CRC_TABLE[(crc ^ b) & 255] ^ (crc >>> 8);
+    return (crc ^ 0xFFFFFFFF) >>> 0;
+  }
+  function zipStored(entries, trailingFooter) {
+    const localParts = [], centralParts = [];
+    let offset = 0;
+    for (const entry of entries) {
+      const name = utf8(entry.name), data = entry.data, crc = crc32(data);
+      const local = new Writer();
+      local.u32(0x04034B50).u16(20).u16(0x0800).u16(0).u16(0).u16(0x0021);
+      local.u32(crc).u32(data.length).u32(data.length).u16(name.length).u16(0).bytes(name).bytes(data);
+      const localBytes = local.toBytes();
+      localParts.push(localBytes);
+      const central = new Writer();
+      central.u32(0x02014B50).u16(20).u16(20).u16(0x0800).u16(0).u16(0).u16(0x0021);
+      central.u32(crc).u32(data.length).u32(data.length).u16(name.length).u16(0).u16(0).u16(0).u16(0).u32(0).u32(offset).bytes(name);
+      centralParts.push(central.toBytes());
+      offset += localBytes.length;
+    }
+    const centralDir = concatBytes(...centralParts);
+    const end = new Writer();
+    end.u32(0x06054B50).u16(0).u16(0).u16(entries.length).u16(entries.length).u32(centralDir.length).u32(offset).u16(0);
+    return concatBytes(...localParts, centralDir, end.toBytes(), trailingFooter);
+  }
+
+  // strokes: page-unit strokes from layoutStrokes(); page: { width, height }.
+  function buildSdocx({ title, page, background, strokes, now }) {
+    if (!strokes.length) throw new Error("No lines were found in this image.");
+    if (strokes.length > MAX_STROKES) throw new Error(`${strokes.length.toLocaleString()} strokes is too many for one page. Use line art, not a photo or shaded image.`);
+    now = BigInt(now ?? (BigInt(Date.now()) * 1000n));
+    const pageWidth = page.width, pageHeight = page.height;
+    const durations = strokes.map((s) => {
+      let ms = 0;
+      for (let i = 1; i < s.points.length; i++) ms += clamp(Math.round(Math.hypot(s.points[i][0] - s.points[i - 1][0], s.points[i][1] - s.points[i - 1][1]) / PEN_SPEED), 1, 0xFFFF);
+      return ms + STROKE_GAP_MS;
+    });
+    let penDown = now - BigInt(durations.reduce((a, b) => a + b, 0)) * 1000n;
+    const objects = strokes.map((stroke, i) => {
+      const object = packStrokeObject(stroke, makeUuidV1(penDown), now - BigInt(strokes.length - i), penDown, pageWidth, pageHeight);
+      penDown += BigInt(durations[i]) * 1000n;
+      return object;
+    });
+    const mainPage = buildPage(makeUuidV1(now), pageWidth, pageHeight, background >>> 0, objects, now);
+    const blankPage = buildPage(makeUuidV1(now), BLANK_PAGE_WIDTH, BLANK_PAGE_HEIGHT, background >>> 0, [], now);
+    const pages = [mainPage, blankPage];
+    const note = buildNoteFile(title, pages, now);
+    const noteWidth = Math.max(...pages.map((p) => p.width));
+    const noteHeight = pages.reduce((sum, p) => sum + p.height, 0) + NOTE_VERTICAL_PADDING;
+    const endTag = buildEndTag(noteWidth, noteHeight, now, now);
+    const trailer = buildEndTag(noteWidth, noteHeight, now, now / 1000n);
+    const bytes = zipStored([
+      { name: "pageIdInfo.dat", data: buildPageIdInfo(note.hash, pages) },
+      ...pages.map((p) => ({ name: p.id + ".page", data: p.data })),
+      { name: "media/mediaInfo.dat", data: buildMediaInfo() },
+      { name: "note.note", data: note.data },
+      { name: "end_tag.bin", data: endTag },
+    ], trailer);
+    return { bytes, objects, pageWidth, pageHeight, drawnRect: mainPage.drawnRect };
+  }
+
+  global.SdocxCore = { vectorize, pageGeometry, layoutStrokes, buildSdocx, MAX_STROKES };
+})(globalThis);
+</script>
+
+<script>
+(() => {
+  "use strict";
+
+  const $ = (id) => document.getElementById(id);
+  const core = globalThis.SdocxCore;
+  const dropzone = $("dropzone");
+  const fileInput = $("file-input");
+  const convertButton = $("convert");
+  const status = $("status");
+  const marginInput = $("margin");
+  const detailInput = $("detail");
+  const strokeCanvas = $("stroke-canvas");
+  const MAX_PROCESS_SIDE = 2048;
+  let selected = null;       // { name, bitmap, pixels, width, height }
+  let traced = null;         // vectorize() result for the current detail level
+  let previewUrl = null;
+  let traceTimer = 0;
+
+  function sampleAutoBackground(bitmap) {
+    const canvas = document.createElement("canvas");
+    canvas.width = 64; canvas.height = 64;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.clearRect(0,0,64,64);
+    ctx.drawImage(bitmap,0,0,64,64);
+    const pixels = ctx.getImageData(0,0,64,64).data;
+    const channels = [[],[],[]];
+    let hasTransparency = false;
+    for (let y=0;y<64;y++) for (let x=0;x<64;x++) {
+      if (x<5 || x>=59 || y<5 || y>=59) {
+        const i=(y*64+x)*4;
+        if (pixels[i+3] < 250) hasTransparency = true;
+        if (pixels[i+3] > 32) { channels[0].push(pixels[i]); channels[1].push(pixels[i+1]); channels[2].push(pixels[i+2]); }
+      }
+    }
+    canvas.width=1; canvas.height=1;
+    // Transparent pixels reveal the note page. Use white rather than sampling
+    // the visible drawing strokes (which can otherwise turn the page black).
+    if (hasTransparency || !channels[0].length) return 0xFFFFFFFF;
+    const med = arr => { arr.sort((a,b)=>a-b); return arr[Math.floor(arr.length/2)]; };
+    const r=med(channels[0]), g=med(channels[1]), b=med(channels[2]);
+    return (0xFF000000 | (r<<16) | (g<<8) | b) >>> 0;
+  }
+
+  function chooseBackground(bitmap) {
+    const value = $("background").value;
+    if (value === "white") return 0xFFFFFFFF;
+    if (value === "black") return 0xFF000000;
+    if (value === "dark") return 0xFF202124;
+    if (value === "warm") return 0xFFFFF7E8;
+    return sampleAutoBackground(bitmap);
+  }
+
+  function sanitizeFilename(value) {
+    return String(value || "My Drawing").replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").trim().replace(/[. ]+$/g, "") || "My Drawing";
+  }
+
+  function setStatus(message, isError = false) {
+    status.textContent = message;
+    status.style.color = isError ? "#ff9b9b" : "";
+  }
+
+  async function loadImageFile(file) {
+    let bitmap;
+    try { bitmap = await createImageBitmap(file, { imageOrientation: "from-image" }); }
+    catch { bitmap = await createImageBitmap(file); }
+    if (!bitmap.width || !bitmap.height) { bitmap.close?.(); throw new Error("The selected file does not contain a readable image."); }
+    // Trace at most MAX_PROCESS_SIDE px on the long side; the page is only ~720 units wide.
+    const scale = Math.min(1, MAX_PROCESS_SIDE / Math.max(bitmap.width, bitmap.height));
+    const width = Math.max(1, Math.round(bitmap.width * scale)), height = Math.max(1, Math.round(bitmap.height * scale));
+    const canvas = document.createElement("canvas");
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.clearRect(0, 0, width, height);
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(bitmap, 0, 0, width, height);
+    const pixels = ctx.getImageData(0, 0, width, height).data;
+    canvas.width = 1; canvas.height = 1;
+    return { name: file.name, bitmap, pixels, width, height };
+  }
+
+  function currentLayout() {
+    const geometry = core.pageGeometry(selected.width, selected.height, marginInput.value);
+    return { geometry, strokes: core.layoutStrokes(traced, geometry) };
+  }
+
+  function drawPreview() {
+    if (!selected || !traced) return;
+    const { geometry, strokes } = currentLayout();
+    const background = chooseBackground(selected.bitmap);
+    const maxSide = 520;
+    const view = Math.min(maxSide / geometry.width, maxSide / geometry.height);
+    const ratio = window.devicePixelRatio || 1;
+    strokeCanvas.width = Math.round(geometry.width * view * ratio);
+    strokeCanvas.height = Math.round(geometry.height * view * ratio);
+    strokeCanvas.style.width = Math.round(geometry.width * view) + "px";
+    const ctx = strokeCanvas.getContext("2d");
+    ctx.setTransform(view * ratio, 0, 0, view * ratio, 0, 0);
+    ctx.fillStyle = "#" + (background & 0xFFFFFF).toString(16).padStart(6, "0");
+    ctx.fillRect(0, 0, geometry.width, geometry.height);
+    ctx.lineCap = "round"; ctx.lineJoin = "round";
+    for (const s of strokes) {
+      const a = ((s.color >>> 24) & 255) / 255;
+      ctx.strokeStyle = `rgba(${(s.color >>> 16) & 255},${(s.color >>> 8) & 255},${s.color & 255},${a})`;
+      if (s.pressures.every((p) => p === 1)) {
+        ctx.lineWidth = s.size;
+        ctx.beginPath();
+        s.points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
+        ctx.stroke();
+        continue;
+      }
+      // Tapered: union of discs and joining quads, filled once (nonzero, all subpaths clockwise).
+      ctx.fillStyle = ctx.strokeStyle;
+      const outline = new Path2D();
+      s.points.forEach(([x, y], i) => {
+        const r = s.size * s.pressures[i] / 2;
+        outline.moveTo(x + r, y); outline.arc(x, y, r, 0, 2 * Math.PI);
+        if (!i) return;
+        const [px, py] = s.points[i - 1], pr = s.size * s.pressures[i - 1] / 2;
+        const len = Math.hypot(x - px, y - py);
+        if (len <= Math.abs(r - pr)) return;
+        const nx = -(y - py) / len, ny = (x - px) / len;
+        outline.moveTo(px - nx * pr, py - ny * pr); outline.lineTo(x - nx * r, y - ny * r);
+        outline.lineTo(x + nx * r, y + ny * r); outline.lineTo(px + nx * pr, py + ny * pr); outline.closePath();
+      });
+      ctx.fill(outline);
+    }
+    const points = strokes.reduce((sum, s) => sum + s.points.length, 0);
+    $("stroke-count").textContent = `${strokes.length.toLocaleString()} strokes · ${points.toLocaleString()} points`;
+  }
+
+  async function retrace() {
+    if (!selected) return;
+    convertButton.disabled = true;
+    setStatus("Tracing lines…");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    try {
+      const started = performance.now();
+      // shortcut: tracing runs on the main thread (the page pauses ~1 s on 2048 px images), move it to a Worker if large scans feel sluggish
+      traced = core.vectorize(selected.pixels, selected.width, selected.height, { detail: Number(detailInput.value) });
+      if (!traced.strokes.length) throw new Error("No lines found. Use line art on a transparent or plain background.");
+      if (traced.strokes.length > core.MAX_STROKES) throw new Error(`${traced.strokes.length.toLocaleString()} lines found: this looks like a photo or shaded image. Use line art.`);
+      drawPreview();
+      convertButton.disabled = false;
+      setStatus(`Ready — ${traced.strokes.length.toLocaleString()} strokes traced in ${Math.round(performance.now() - started)} ms.`);
+    } catch (error) {
+      console.error(error);
+      traced = null;
+      $("stroke-count").textContent = "";
+      setStatus(error?.message || "Could not trace this image.", true);
+    }
+  }
+
+  async function useFile(file) {
+    if (!file) return;
+    if (!file.type.startsWith("image/")) { setStatus("Please choose an image file.", true); return; }
+    setStatus("Loading image…");
+    convertButton.disabled = true;
+    try {
+      const loaded = await loadImageFile(file);
+      selected?.bitmap?.close?.();
+      selected = loaded;
+      if (previewUrl) URL.revokeObjectURL(previewUrl);
+      previewUrl = URL.createObjectURL(file);
+      $("preview-img").src = previewUrl;
+      $("preview-wrap").style.display = "block";
+      $("file-meta").textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
+      $("dimensions").textContent = `${loaded.bitmap.width.toLocaleString()} × ${loaded.bitmap.height.toLocaleString()} px`;
+      const currentName = $("note-name").value.trim();
+      if (!currentName || currentName === "My Drawing") $("note-name").value = file.name.replace(/\.[^.]+$/, "").slice(0,100);
+      await retrace();
+    } catch (error) {
+      setStatus(error?.message || "Could not load this image.", true);
+      selected = null; traced = null;
+      convertButton.disabled = true;
+    }
+  }
+
+  dropzone.addEventListener("click", () => fileInput.click());
+  dropzone.addEventListener("keydown", event => { if (event.key === "Enter" || event.key === " ") { event.preventDefault(); fileInput.click(); } });
+  fileInput.addEventListener("change", event => useFile(event.target.files?.[0]));
+  for (const eventName of ["dragenter", "dragover"]) dropzone.addEventListener(eventName, event => { event.preventDefault(); dropzone.classList.add("dragover"); });
+  for (const eventName of ["dragleave", "drop"]) dropzone.addEventListener(eventName, event => { event.preventDefault(); dropzone.classList.remove("dragover"); });
+  dropzone.addEventListener("drop", event => useFile(event.dataTransfer?.files?.[0]));
+  marginInput.addEventListener("input", () => { $("margin-value").textContent = `${marginInput.value}%`; drawPreview(); });
+  $("background").addEventListener("change", drawPreview);
+  detailInput.addEventListener("input", () => {
+    $("detail-value").textContent = detailInput.value;
+    clearTimeout(traceTimer);
+    traceTimer = setTimeout(retrace, 200);
+  });
+
+  convertButton.addEventListener("click", async () => {
+    if (!selected || !traced) return;
+    convertButton.disabled = true;
+    convertButton.textContent = "Building Samsung Notes file…";
+    setStatus("Writing pen strokes into the .sdocx package…");
+    await new Promise((resolve) => setTimeout(resolve, 30));
+    try {
+      const title = $("note-name").value.trim() || "My Drawing";
+      const { geometry, strokes } = currentLayout();
+      const now = BigInt(Date.now()) * 1000n + BigInt(Math.floor((performance.now() % 1) * 1000));
+      const result = core.buildSdocx({ title, page: geometry, background: chooseBackground(selected.bitmap), strokes, now });
+      const blob = new Blob([result.bytes], { type: "application/octet-stream" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = sanitizeFilename(title) + ".sdocx";
+      document.body.appendChild(link); link.click(); link.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 5000);
+      setStatus(`Done — ${link.download} · ${result.objects.length.toLocaleString()} strokes on a ${result.pageWidth} × ${result.pageHeight} page.`);
+    } catch (error) {
+      console.error(error);
+      setStatus(error?.message || "Conversion failed. Try a different image.", true);
+    } finally {
+      convertButton.disabled = !traced;
+      convertButton.innerHTML = 'Convert to .sdocx <span aria-hidden="true">↗</span>';
+    }
+  });
+})();
+</script>
+</body>
+</html>

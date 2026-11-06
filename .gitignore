@@ -1,0 +1,7 @@
+# written by node tests/run_tests.js
+tests/out/
+__pycache__/
+
+# your own drawings and phone screenshots in the project root stay local
+/*.png
+/*.jpg
