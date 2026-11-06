@@ -1,5 +1,5 @@
 'use strict';
-// End-to-end verification of samsung_notes_converter.html.
+// End-to-end verification of index.html.
 //  1. The FORMAT.md parser (sdocx_parser.js) decodes the three Samsung Notes samples, hash chain included.
 //  2. Each fixture PNG is traced and written by the converter's own <script id="sdocx-core">.
 //  3. The generated .sdocx is re-parsed: structure must match the samples, every stroke must round-trip,
@@ -15,7 +15,7 @@ const { parseSdocx, strokesOf } = require('./sdocx_parser.js');
 
 const ROOT = path.join(__dirname, '..');
 const OUT = path.join(__dirname, 'out');
-const HTML = path.join(ROOT, 'samsung_notes_converter.html');
+const HTML = path.join(ROOT, 'index.html');
 const SAMPLES = ['Notes_261106_225150.sdocx', 'Notes_261106_225305.sdocx', 'Test_261106_205901.sdocx'];
 const rgb = (r, g, b, a = 1) => [r, g, b, a].map((v) => Math.round(v * 255));
 // Drawn lines per fixture (null: passes gone over twice have no single right count) and the colours used in make_fixtures.py.
@@ -174,8 +174,8 @@ function renderStrokes(decoded, W, H, toImageX, toImageY, scale) {
 function loadCore() {
   const html = fs.readFileSync(HTML, 'utf8');
   const match = html.match(/<script id="sdocx-core">([\s\S]*?)<\/script>/);
-  if (!match) throw new Error('<script id="sdocx-core"> not found in samsung_notes_converter.html');
-  vm.runInThisContext(match[1], { filename: 'samsung_notes_converter.html#sdocx-core' });
+  if (!match) throw new Error('<script id="sdocx-core"> not found in index.html');
+  vm.runInThisContext(match[1], { filename: 'index.html#sdocx-core' });
   return { core: globalThis.SdocxCore, html };
 }
 

@@ -1,4 +1,4 @@
-# drawconvert
+# [drawconvert](https://azp3001.github.io/drawconvert/)
 
 Turn line art into real, editable **Samsung Notes** pen strokes.
 
@@ -8,7 +8,7 @@ Drop in a PNG and download a `.sdocx` note. In Samsung Notes every line is a nor
 
 ## Use it
 
-1. Open **https://azp3001.github.io/drawconvert/samsung_notes_converter.html** in Chrome or Edge, on a computer or on the phone. You can also download `samsung_notes_converter.html` and open it locally; it works offline. Either way, nothing is uploaded.
+1. Open **https://azp3001.github.io/drawconvert/** in Chrome or Edge, on a computer or on the phone. You can also download `index.html` and open it locally; it works offline. Either way, nothing is uploaded.
 2. Drop a PNG on it, or click to pick one. A transparent background works best; drawings on plain white paper work too.
 3. Check the **stroke preview**. It is what Samsung Notes will show.
    - **Detail**: left smooths the lines, right follows every wiggle.

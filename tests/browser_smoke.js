@@ -1,5 +1,5 @@
 'use strict';
-// Drives samsung_notes_converter.html in headless Chrome: loads each fixture through the file input,
+// Drives index.html in headless Chrome: loads each fixture through the file input,
 // waits for tracing, checks the stroke preview, moves the sliders, clicks Convert and re-parses the
 // downloaded .sdocx with the FORMAT.md parser. Fails on any page exception or console error.
 // Usage: node tests/browser_smoke.js        (CHROME=/path/to/chrome to pick the browser)
@@ -9,7 +9,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { parseSdocx, strokesOf } = require('./sdocx_parser.js');
 
-const HTML = path.join(__dirname, '..', 'samsung_notes_converter.html');
+const HTML = path.join(__dirname, '..', 'index.html');
 const FIXTURES = ['simple_lines', 'thick_brush', 'color_sketch'];
 
 function findChrome() {

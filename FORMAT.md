@@ -350,7 +350,7 @@ the drawing. The samples' blank pages carry no cache. The converter omits it on 
 - **Width calibration.** The pad shows the widest possible InkPen2 line is `penSize` (half-width `penSize/2`), independent of the pressures actually drawn.
 - **Pressure.** The converter treats InkPen2 width as `penSize × pressure` and holds pressure at 1.0 on even-width lines, so only tapered lines depend on the mapping. *Inferred, not verified.* The samples carry pressure but no rendered widths, so the mapping must be checked on the device.
 
-## 9. What `samsung_notes_converter.html` writes
+## 9. What the converter (`index.html`) writes
 
 - **ZIP.** Entries in sample order without `.spi` files: `pageIdInfo.dat`, the drawing page, a blank page (as Samsung writes it), `media/mediaInfo.dat` (0 entries), `note.note`, `end_tag.bin`, then the trailing end-tag copy (display times in ms). Entries are stored, not deflated.
 - **Pages.** mask `0x71` (drawnRect, bgImageMode 2, bgColor, bgWidth; no canvas cache), 720 × 1018 (1018 × 720 for landscape images), one layer, header bytes as in §3.1/§3.3.
