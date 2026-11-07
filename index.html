@@ -985,6 +985,12 @@
       }
       if (!kept) shade = null;
     }
+    // Fine lines drawn through shading (hair strands, an eye, a face outline) are ridges: darker than their surroundings
+    // over about 2 px. They leave the shading before its tone is measured, so they are traced as lines over it.
+    if (shade) {
+      const local = blur(src, W, H, 2 * k);
+      for (let i = 0; i < N; i++) if (shade[i] && src[i] - local[i] >= 0.08) shade[i] = 0;
+    }
     const pageScale = pageGeometry(width, height, 2).scale, spacing = PENCIL_SIZE / pageScale * k;
     let cov = src, covMass = lin, tone = null;
     if (shade) {
