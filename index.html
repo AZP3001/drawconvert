@@ -45,17 +45,19 @@
   .drop-sub { color: var(--muted); font-size: 13px; margin-top: 5px; }
   .file-meta { color: #c8d8ed; font-size: 12px; margin-top: 11px; overflow-wrap: anywhere; }
   input[type=file] { display: none; }
-  .preview-wrap { margin-top: 16px; display: none; }
+  .preview-card { margin-top: 18px; display: none; }
+  .preview-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
+  .preview-cols > div { min-width: 0; }
+  .previews.live-on .preview { height: 440px; }
   .preview-label { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin: 0 2px 8px; }
-  .preview { min-height: 180px; max-height: 360px; padding: 16px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #fff; overflow: hidden; }
+  .preview { height: 560px; padding: 12px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #fff; overflow: hidden; }
   .preview img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; box-shadow: 0 8px 32px #0008; }
   .previews { display: grid; grid-template-columns: 1fr; gap: 10px; }
   .previews.live-on { grid-template-columns: 1fr 1fr; }
-  .preview canvas { display: block; max-width: 100%; max-height: 320px; box-shadow: 0 8px 32px #0008; }
+  .preview canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
   #preview-canvas { cursor: crosshair; touch-action: none; }
   [hidden] { display: none !important; }
   .previews > * { min-width: 0; }
-  .previews.live-on .preview { padding: 8px; min-height: 120px; }
   .live { position: relative; background: repeating-conic-gradient(#d9dce1 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
   .live .compare-tag { left: 8px; }
   .erase-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; color: var(--muted); font-size: 12px; }
@@ -64,6 +66,14 @@
   .small:disabled { opacity: .4; cursor: not-allowed; }
   .check { justify-content: flex-start; cursor: pointer; }
   .check input { width: 17px; height: 17px; margin: 0; accent-color: #c7dcfa; }
+  .stroke-preview { position: relative; }
+  .corner { position: absolute; right: 8px; bottom: 8px; z-index: 5; }
+  /* Fullscreen: the eraser view or the comparison fills the screen, canvases as large as fit. */
+  .edit-box:fullscreen, .stroke-preview:fullscreen { background: var(--bg); padding: 16px; display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: 10px; }
+  .edit-box:fullscreen .previews { flex: 1; min-height: 0; }
+  .edit-box:fullscreen .preview { height: 100%; }
+  .stroke-preview:fullscreen { align-items: center; border: 0; border-radius: 0; }
+  .stroke-preview:fullscreen #stroke-canvas { width: auto !important; height: calc(100vh - 32px); max-width: calc(100vw - 32px); }
   .stroke-preview { padding: 12px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #171a20; }
   .stroke-preview canvas { display: block; max-width: 100%; height: auto; box-shadow: 0 8px 32px #0008; }
   /* Before/after slider: your picture over the strokes, shown left of the divider. An invisible range input on top
@@ -104,6 +114,8 @@
   @media (max-width: 740px) {
     .shell { padding-top: 30px; }
     .layout { grid-template-columns: 1fr; }
+    .preview-cols { grid-template-columns: 1fr; }
+    .preview { height: 380px; }
     .dropzone { min-height: 190px; }
   }
 </style>
@@ -128,29 +140,6 @@
         <div class="file-meta" id="file-meta"></div>
       </div>
       <input id="file-input" type="file" accept="image/*">
-      <div class="preview-wrap" id="preview-wrap">
-        <div class="preview-label"><span>Image preview — paint over a part (watermark, text) to cut it out</span><span id="dimensions"></span></div>
-        <div class="previews" id="previews">
-          <div class="preview" id="preview"><canvas id="preview-canvas" width="1" height="1" role="img" aria-label="Your drawing; paint over it to erase parts before tracing"></canvas></div>
-          <div class="preview live" id="live-box" hidden><span class="compare-tag">Live preview</span><canvas id="live-canvas" width="1" height="1" role="img" aria-label="The drawing as it is traced, background removed"></canvas></div>
-        </div>
-        <div class="erase-row">
-          <label for="brush" style="margin:0;font-weight:500">Eraser</label>
-          <input id="brush" type="range" min="1" max="15" step="1" value="4" aria-label="Eraser size">
-          <button class="small" id="undo-erase" type="button" disabled>Undo</button>
-          <button class="small" id="clear-erase" type="button" disabled>Restore all</button>
-        </div>
-        <div class="preview-label" style="margin-top:14px"><span>Stroke preview — drag across it to compare with your picture</span><span id="stroke-count"></span></div>
-        <div class="stroke-preview">
-          <div class="compare" id="compare">
-            <canvas id="stroke-canvas" width="360" height="509" role="img" aria-label="Preview of the generated pen strokes"></canvas>
-            <canvas id="picture-canvas" width="360" height="509" aria-hidden="true"></canvas>
-            <span class="compare-tag" style="left:8px">Your picture</span><span class="compare-tag" style="right:8px">Strokes</span>
-            <input id="split" type="range" min="0" max="100" step="0.1" value="50" aria-label="Comparison divider: your picture on the left, the strokes on the right">
-          </div>
-        </div>
-        <div class="preview-label" style="margin-top:10px"><span title="At your picture's resolution: the ink the strokes share with your picture, divided by all the ink in either, each pixel weighted by its strength. Ink is measured against the picture's own paper colour; lines a pixel off still match, and paper grain is ignored. 100% means identical.">Accuracy — strokes vs. your picture</span><span id="match"></span></div>
-      </div>
     </section>
 
     <section class="card" aria-labelledby="settings-title">
@@ -198,6 +187,41 @@
       </div>
     </section>
   </div>
+
+  <section class="card preview-card" id="preview-wrap" aria-labelledby="preview-title">
+    <h2 id="preview-title">03 — Preview</h2>
+    <div class="preview-cols">
+      <div>
+        <div class="preview-label"><span>Image preview — paint over a part (watermark, text) to cut it out</span><span id="dimensions"></span></div>
+        <div class="edit-box" id="edit-box">
+        <div class="previews" id="previews">
+          <div class="preview" id="preview"><canvas id="preview-canvas" width="1" height="1" role="img" aria-label="Your drawing; paint over it to erase parts before tracing"></canvas></div>
+          <div class="preview live" id="live-box" hidden><span class="compare-tag">Live preview</span><canvas id="live-canvas" width="1" height="1" role="img" aria-label="The drawing as it is traced, background removed"></canvas></div>
+        </div>
+        <div class="erase-row">
+          <label for="brush" style="margin:0;font-weight:500">Eraser</label>
+          <input id="brush" type="range" min="1" max="15" step="1" value="4" aria-label="Eraser size">
+          <button class="small" id="undo-erase" type="button" disabled>Undo</button>
+          <button class="small" id="clear-erase" type="button" disabled>Restore all</button>
+          <button class="small full-btn" type="button" data-full="edit-box">⛶ Fullscreen</button>
+        </div>
+        </div>
+      </div>
+      <div>
+        <div class="preview-label"><span>Stroke preview — drag across it to compare with your picture</span><span id="stroke-count"></span></div>
+        <div class="stroke-preview" id="stroke-box">
+          <div class="compare" id="compare">
+            <canvas id="stroke-canvas" width="360" height="509" role="img" aria-label="Preview of the generated pen strokes"></canvas>
+            <canvas id="picture-canvas" width="360" height="509" aria-hidden="true"></canvas>
+            <span class="compare-tag" style="left:8px">Your picture</span><span class="compare-tag" style="right:8px">Strokes</span>
+            <input id="split" type="range" min="0" max="100" step="0.1" value="50" aria-label="Comparison divider: your picture on the left, the strokes on the right">
+          </div>
+          <button class="small full-btn corner" type="button" data-full="stroke-box">⛶ Fullscreen</button>
+        </div>
+        <div class="preview-label" style="margin-top:10px"><span title="At your picture's resolution: the ink the strokes share with your picture, divided by all the ink in either, each pixel weighted by its strength. Ink is measured against the picture's own paper colour; lines a pixel off still match, and paper grain is ignored. 100% means identical.">Accuracy — strokes vs. your picture</span><span id="match"></span></div>
+      </div>
+    </div>
+  </section>
 
   <div class="note"><strong>How it works:</strong> the drawing is traced in your browser. Inked pixels (alpha, or darkness on opaque images) are thinned to centre lines, split at crossings so each drawn line stays one stroke, simplified, and written as native Samsung Notes strokes with the line's own colour and thickness: lines with the Pen, fading ends included, and shading with the Pencil, its transparency matching the tone (gradients in 10% steps). Small images are traced on an enlarged copy, so thin lines keep their place and width. No image is embedded, so each stroke can be selected, moved and removed with the stroke eraser like strokes you drew yourself.</div>
   <div class="footer">Single-file tool · No account · No server</div>
@@ -1465,19 +1489,19 @@
       }
       hatch(region, rt);
     }
-    for (let round = 0; round < 3 && strokes.length; round++) {
+    for (let round = 0; round < 6 && strokes.length; round++) {
       const { shown, feet } = draw();
       strokes.forEach((st, si) => {
         let want = 0, have = 0;
         const m = st.points.length, pw = new Float64Array(m), ph = new Float64Array(m);
         for (const [p, j] of feet[si].at) { want += cov0[p]; have += shown[p]; pw[j] += cov0[p]; ph[j] += shown[p]; }
         if (!(have > 0 && want > 0)) return;
-        const r = clamp(Math.pow(want / have, 0.6), 0.6, 1.6);
+        const r = clamp(Math.pow(want / have, 0.8), 0.6, 1.6);
         // A pen line is corrected along its length (each point by the ink around it and its neighbours), a pencil stroke as a whole.
         if (st.pen === "pen") st.widths = st.widths.map((w, j) => {
           let a = 0, b = 0;
           for (let i = Math.max(0, j - 1); i <= Math.min(m - 1, j + 1); i++) { a += pw[i]; b += ph[i]; }
-          return w * (b > 0 && a > 0 ? clamp(Math.pow(a / b, 0.6), 0.6, 1.6) : r);
+          return w * (b > 0 && a > 0 ? clamp(Math.pow(a / b, 0.8), 0.6, 1.6) : r);
         });
         else {
           const tone = Math.min(PENCIL_TONE[PENCIL_TONE.length - 1][1], pencilTone(((st.color >>> 24) & 255) / 255) * r);
@@ -2134,7 +2158,7 @@
     if (!selected || !traced) return;
     const { geometry, strokes } = currentLayout();
     const background = chooseBackground();
-    const maxSide = 520;
+    const maxSide = 720;
     const view = Math.min(maxSide / geometry.width, maxSide / geometry.height);
     const ratio = window.devicePixelRatio || 1;
     strokeCanvas.width = Math.round(geometry.width * view * ratio);
@@ -2290,29 +2314,50 @@
   $("background").addEventListener("change", drawPreview);
   $("split").addEventListener("input", (event) => $("compare").style.setProperty("--split", `${event.target.value}%`));
   // Eraser: paint on the image preview; each drag is one undo step, and the drawing is retraced when it ends.
-  let painting = false;
+  let painting = false, last = null;
   const previewCanvas = $("preview-canvas");
+  // A drag erases a continuous band: discs every quarter brush along the path between pointer events, drawn onto the
+  // preview as they go (the full redraw and retrace wait for the end of the drag).
   const paintAt = (event) => {
     const box = previewCanvas.getBoundingClientRect(), { width, height, erased } = selected;
-    const x = (event.clientX - box.left) / box.width * width, y = (event.clientY - box.top) / box.height * height;
-    const r = Number($("brush").value) / 200 * Math.max(width, height);
-    for (let yy = Math.max(0, Math.floor(y - r)); yy <= Math.min(height - 1, Math.ceil(y + r)); yy++)
-      for (let xx = Math.max(0, Math.floor(x - r)); xx <= Math.min(width - 1, Math.ceil(x + r)); xx++)
-        if ((xx + 0.5 - x) ** 2 + (yy + 0.5 - y) ** 2 <= r * r) erased[yy * width + xx] = 1;
-    drawSource();
+    const scale = Math.min(box.width / width, box.height / height);   // object-fit: contain centres the picture
+    const x = (event.clientX - box.left - (box.width - width * scale) / 2) / scale, y = (event.clientY - box.top - (box.height - height * scale) / 2) / scale;
+    const r = Number($("brush").value) / 200 * Math.max(width, height), [px, py] = last || [x, y];
+    const ctx = previewCanvas.getContext("2d");
+    ctx.fillStyle = "rgba(255, 70, 70, 0.55)";
+    const steps = Math.max(1, Math.ceil(Math.hypot(x - px, y - py) / Math.max(0.5, r / 4)));
+    for (let k = last ? 1 : 0; k <= steps; k++) {
+      const cx = px + (x - px) * k / steps, cy = py + (y - py) * k / steps;
+      for (let yy = Math.max(0, Math.floor(cy - r)); yy <= Math.min(height - 1, Math.ceil(cy + r)); yy++)
+        for (let xx = Math.max(0, Math.floor(cx - r)); xx <= Math.min(width - 1, Math.ceil(cx + r)); xx++)
+          if ((xx + 0.5 - cx) ** 2 + (yy + 0.5 - cy) ** 2 <= r * r) erased[yy * width + xx] = 1;
+    }
+    ctx.lineCap = "round"; ctx.lineWidth = 2 * r; ctx.strokeStyle = ctx.fillStyle;
+    ctx.beginPath(); ctx.moveTo(px, py); ctx.lineTo(x + 0.01, y); ctx.stroke();
+    last = [x, y];
   };
   previewCanvas.addEventListener("pointerdown", (event) => {
     if (!selected) return;
-    painting = true;
+    painting = true; last = null;
     previewCanvas.setPointerCapture(event.pointerId);
     selected.undo.push(selected.erased.slice());
     if (selected.undo.length > 30) selected.undo.shift();
     paintAt(event);
   });
-  previewCanvas.addEventListener("pointermove", (event) => { if (painting) paintAt(event); });
+  previewCanvas.addEventListener("pointermove", (event) => {
+    if (!painting) return;
+    for (const e of event.getCoalescedEvents?.() || [event]) paintAt(e);   // every sampled point of a fast drag
+  });
   for (const name of ["pointerup", "pointercancel"]) previewCanvas.addEventListener(name, () => { if (painting) { painting = false; editsChanged(); } });
   $("undo-erase").addEventListener("click", () => { if (selected?.undo.length) { selected.erased = selected.undo.pop(); editsChanged(); } });
   $("clear-erase").addEventListener("click", () => { if (selected) { selected.undo.push(selected.erased); selected.erased = new Uint8Array(selected.width * selected.height); editsChanged(); } });
+  for (const button of document.querySelectorAll(".full-btn")) button.addEventListener("click", () => {
+    if (document.fullscreenElement) document.exitFullscreen();
+    else $(button.dataset.full).requestFullscreen?.().catch(() => setStatus("Fullscreen is not available here.", true));
+  });
+  document.addEventListener("fullscreenchange", () => {
+    for (const button of document.querySelectorAll(".full-btn")) button.textContent = document.fullscreenElement ? "✕ Exit fullscreen" : "⛶ Fullscreen";
+  });
   removeBg.addEventListener("change", () => { $("tolerance-row").hidden = !removeBg.checked; editsChanged(); });
   toleranceInput.addEventListener("input", () => {
     $("tolerance-value").textContent = `${toleranceInput.value}%`;
