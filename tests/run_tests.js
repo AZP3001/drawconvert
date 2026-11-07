@@ -555,6 +555,16 @@ function runEdgeCases(core) {
     const s = core.vectorize(px, w, h, { detail: DEFAULT_DETAIL }).strokes, want = (0xFF000000 | (rgbIn[0] << 16) | (rgbIn[1] << 8) | rgbIn[2]) >>> 0;
     check(s.length === 1 && s[0].pen === 'pen' && s[0].color === want, `light colour ${rgbIn} ${lw} px: ${s.map((q) => `${q.pen} ${q.color.toString(16)}`)}`);
   }
+  // Other paper colours: ink keeps its exact colour and stays one Pen stroke (paper flattening must not touch them).
+  for (const [paper, ink] of [[[0, 0, 0], [255, 255, 255]], [[0, 0, 0], [230, 40, 40]], [[60, 60, 64], [0, 0, 0]], [[60, 60, 64], [90, 190, 240]],
+    [[255, 248, 220], [90, 190, 240]], [[250, 240, 200], [255, 255, 255]]]) {
+    const w = 120, h = 60, px = new Uint8ClampedArray(w * h * 4);
+    for (let i = 0; i < w * h; i++) px.set([...paper, 255], 4 * i);
+    for (let y = 24; y < 36; y++) for (let x = 10; x < 110; x++) px.set(ink, (y * w + x) * 4);
+    const flat = core.flattenPaper(px, w, h), s = core.vectorize(flat, w, h, { detail: DEFAULT_DETAIL }).strokes;
+    const want = (0xFF000000 | (ink[0] << 16) | (ink[1] << 8) | ink[2]) >>> 0;
+    check(flat === px && s.length === 1 && s[0].pen === 'pen' && s[0].color === want, `${ink} on ${paper}: ${s.map((q) => `${q.pen} ${q.color.toString(16)}`)}`);
+  }
   const refuses = (build, pattern) => { try { build(); return false; } catch (error) { return pattern.test(error.message); } };
   const page = core.pageGeometry(100, 100, 0);
   const line = { points: [[10, 10], [20, 20]], pressures: [1, 1], size: 2, color: 0xFF000000 };

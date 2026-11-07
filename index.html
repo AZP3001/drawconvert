@@ -138,8 +138,8 @@
       <div class="field">
         <label for="background">Samsung Notes page background <span class="hint">Behind your strokes</span></label>
         <select id="background">
-          <option value="white" selected>White</option>
-          <option value="auto">Auto — match opaque image edges</option>
+          <option value="auto" selected>Auto — match opaque image edges</option>
+          <option value="white">White</option>
           <option value="black">Black</option>
           <option value="dark">Dark grey</option>
           <option value="warm">Warm paper</option>
@@ -256,12 +256,19 @@
   // pixel is divided by it, so the paper reads as even white. Returns the same array when the image is transparent,
   // the paper is dark, or it is lit evenly (under 4 % brightness change), so scans and digital drawings stay as they are.
   function flattenPaper(rgba, width, height) {
+    for (let i = 3; i < rgba.length; i += 4) if (rgba[i] < 250) return rgba;
+    // Dark paper (light ink on black or grey): the brightest cells are ink, not paper, so there is nothing to fit.
+    if (borderColor(rgba, width, height).reduce((a, b) => a + b, 0) < 3 * 128) return rgba;
+    // An evenly lit border is a scan or digital paper: light ink on it (white on cream) must not be fitted as paper.
+    const edge = [];
+    for (let x = 0; x < width; x++) for (const y of [0, height - 1]) { const i = (y * width + x) * 4; edge.push(rgba[i] + rgba[i + 1] + rgba[i + 2]); }
+    for (let y = 0; y < height; y++) for (const x of [0, width - 1]) { const i = (y * width + x) * 4; edge.push(rgba[i] + rgba[i + 1] + rgba[i + 2]); }
+    if (quantile(edge, 0.1) > 0.96 * quantile(edge, 0.9)) return rgba;
     const C = Math.max(4, Math.ceil(Math.max(width, height) / 48)), cells = [];
     for (let y0 = 0; y0 < height; y0 += C) for (let x0 = 0; x0 < width; x0 += C) {
       const ids = [], lums = [];
       for (let y = y0; y < Math.min(height, y0 + C); y++) for (let x = x0; x < Math.min(width, x0 + C); x++) {
         const i = (y * width + x) * 4;
-        if (rgba[i + 3] < 250) return rgba;
         ids.push(i); lums.push(rgba[i] + rgba[i + 1] + rgba[i + 2]);
       }
       const top = quantile(lums, 0.9), sum = [0, 0, 0];
@@ -911,8 +918,14 @@
     const cov0 = new Float32Array(width * height);
     for (let i = 0; i < width * height; i++) {
       const s = i * 4;
-      cov0[i] = transparent ? rgba[s + 3] / 255
-        : Math.max(Math.abs(rgba[s] - bg[0]), Math.abs(rgba[s + 1] - bg[1]), Math.abs(rgba[s + 2] - bg[2])) / 255;
+      // On paper: the largest channel distance from it, as a share of how far that channel can go from the paper
+      // (to 0 or to 255), so black on grey paper or white on black is full ink. On white this is distance / 255.
+      let c0 = 0;
+      if (!transparent) for (let c = 0; c < 3; c++) {
+        const d = rgba[s + c] - bg[c];
+        c0 = Math.max(c0, d < 0 ? -d / Math.max(1, bg[c]) : d / Math.max(1, 255 - bg[c]));
+      }
+      cov0[i] = transparent ? rgba[s + 3] / 255 : Math.min(1, c0);
     }
     // Masks and centre lines come from the smooth bicubic copy; widths and opacity are measured on the linear one.
     const src = upscale(cov0, width, height, k), lin = k > 1 ? upscaleLinear(cov0, width, height, k) : src;
