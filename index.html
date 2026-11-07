@@ -439,12 +439,12 @@
     return a;
   }
 
-  // Shading = translucent ink (softened, lighter than SHADE_MAX) in areas at least 2 x radius wide: the
+  // Shading = soft ink (lighter than SHADE_MAX, or dark across 3 px: graphite filled in) in areas at least 2 x radius wide: the
   // morphological opening of that ink by a disc. Lines, translucent ones included, are narrower, and a few
   // separate lines leave mostly paper between them, where shading (even grainy) carries tone. null if none.
   function shadingMask(cov, W, H, k, radius) {
-    const N = W * H, soft = blur(cov, W, H, 1.5 * k), light = new Uint8Array(N), bare = new Float32Array(N);
-    for (let i = 0; i < N; i++) { light[i] = soft[i] >= SHADE_MIN && cov[i] < SHADE_MAX ? 1 : 0; bare[i] = cov[i] < SHADE_MIN ? 1 : 0; }
+    const N = W * H, soft = blur(cov, W, H, 1.5 * k), wide = blur(cov, W, H, 3 * k), light = new Uint8Array(N), bare = new Float32Array(N);
+    for (let i = 0; i < N; i++) { light[i] = soft[i] >= SHADE_MIN && (cov[i] < SHADE_MAX || wide[i] >= SHADE_MAX) ? 1 : 0; bare[i] = cov[i] < SHADE_MIN ? 1 : 0; }
     const paper = blur(bare, W, H, radius);
     for (let i = 0; i < N; i++) if (paper[i] > 0.5) light[i] = 0;
     dropSmallComponents(light, W, H, 0, 6 * k * k);   // dark pencil grains belong to the shading
@@ -455,24 +455,15 @@
     const toCentre = distanceTransform(off, W, H);
     const shade = new Uint8Array(N);
     for (let i = 0; i < N; i++) shade[i] = light[i] && toCentre[i] <= radius ? 1 : 0;
-    // Crowded line work can pass as broad light ink too. Real shading is even (tone spread up to 0.16 on the test
-    // drawings and photos), crowded lines mix paper and ink (spread 0.19-0.31), so such a region stays line work.
-    const seen = new Uint8Array(N);
+    // Crowded line work can pass as broad light ink too. Real shading is locally even (tone spread up to 0.16 within a
+    // radius), crowded lines mix paper and ink (spread 0.19-0.31). Measured per pixel, so a shading gradient across a
+    // whole figure still counts as shading.
+    const sq = new Float32Array(N);
+    for (let i = 0; i < N; i++) sq[i] = soft[i] * soft[i];
+    const m1 = blur(soft, W, H, radius), m2 = blur(sq, W, H, radius);
     let kept = false;
-    for (let i = 0; i < N; i++) {
-      if (!shade[i] || seen[i]) continue;
-      const region = [i];
-      let sum = 0, sum2 = 0;
-      seen[i] = 1;
-      for (let r = 0; r < region.length; r++) {
-        const j = region[r];
-        sum += cov[j]; sum2 += cov[j] * cov[j];
-        for (const o of [1, -1, W, -W]) if (shade[j + o] && !seen[j + o]) { seen[j + o] = 1; region.push(j + o); }
-      }
-      const mean = sum / region.length;
-      if (Math.sqrt(Math.max(0, sum2 / region.length - mean * mean)) > 0.18) for (const j of region) shade[j] = 0;
-      else kept = true;
-    }
+    for (let i = 0; i < N; i++) if (shade[i]) { if (Math.sqrt(Math.max(0, m2[i] - m1[i] * m1[i])) > 0.18) shade[i] = 0; else kept = true; }
+    if (kept) dropSmallComponents(shade, W, H, 1, 4 * radius * radius);
     return kept ? shade : null;
   }
 
@@ -962,12 +953,13 @@
     const src = upscale(cov0, width, height, k), lin = k > 1 ? upscaleLinear(cov0, width, height, k) : src;
     // Shading is hatched with the pencil (below), not traced as lines. Its tone is the mean shading coverage
     // away from dark lines; lines are traced from their own coverage: the source with that tone un-composited.
-    let shade = shadingMask(src, W, H, k, Math.max(4, Math.max(width, height) / 300) * k);
-    if (shade && !transparent) {
+    let penShade = null, shade = shadingMask(src, W, H, k, Math.max(4, Math.max(width, height) / 300) * k);
+    if (shade) {
       // A shading region that is solid colour (judged on its mean, so pale edges and JPEG noise don't decide) is a
       // coloured line or fill: traced with the pen, not hatched. Solid means most of it within 10 % of its median
       // coverage (flat colour: 84-94 %); coloured pencil shading is grainy (about 10 %) and stays Pencil hatching.
-      const seen = new Uint8Array(N);
+      const seen = new Uint8Array(N), thick = distanceTransform(shade, W, H);
+      penShade = new Uint8Array(N);
       let kept = false;
       for (let i = 0; i < N; i++) {
         if (!shade[i] || seen[i]) continue;
@@ -980,8 +972,10 @@
         }
         const vals = region.map((j) => src[j]).sort((a, b) => a - b), med = vals[vals.length >> 1];
         const flat = vals.filter((v) => Math.abs(v - med) < 0.1 * med).length >= 0.5 * vals.length;
-        if (flat && tinted(sum.map((v) => v / region.length), 6)) for (const j of region) shade[j] = 0;
-        else kept = true;
+        const solid = flat && (tinted(sum.map((v) => v / region.length), 6) || med >= SHADE_MAX);
+        // A solid colour (or solid dark) band up to a brush line's width (2 % of the image) is a line (pen stroke); wider, a fill: pen hatching.
+        if (solid && region.every((j) => thick[j] <= Math.max(8, Math.max(width, height) / 50) * k)) for (const j of region) shade[j] = 0;
+        else { kept = true; if (solid) for (const j of region) penShade[j] = 1; }
       }
       if (!kept) shade = null;
     }
@@ -995,17 +989,19 @@
     let cov = src, covMass = lin, tone = null;
     if (shade) {
       const dark = new Uint8Array(N), valid = new Float32Array(N), toned = new Float32Array(N);
-      for (let i = 0; i < N; i++) dark[i] = src[i] >= SHADE_MAX ? 1 : 0;
+      for (let i = 0; i < N; i++) dark[i] = src[i] >= SHADE_MAX && !shade[i] ? 1 : 0;
       const near = maxFilter(dark, W, H, Math.ceil(1.5 * k));
       for (let i = 0; i < N; i++) if (shade[i] && !near[i]) { valid[i] = 1; toned[i] = src[i]; }
+      // Tone darker than the pencil reaches (SHADE_MAX) is hatched with the pen in the shown colour.
       const support = blur(valid, W, H, spacing / 2), sum = blur(toned, W, H, spacing / 2);
       tone = new Float32Array(N); cov = new Float32Array(N); covMass = new Float32Array(N);
       for (let i = 0; i < N; i++) {
-        if (support[i] >= 0.2) tone[i] = Math.min(SHADE_MAX, sum[i] / support[i]);
+        if (support[i] >= 0.2) tone[i] = Math.min(1, sum[i] / support[i]);
         cov[i] = clamp((src[i] - tone[i]) / (1 - tone[i]), 0, 1);
         covMass[i] = clamp((lin[i] - tone[i]) / (1 - tone[i]), 0, 1);
       }
     }
+    const nearShade = shade && maxFilter(shade, W, H, Math.ceil(spacing));
     const peak = maxFilter(cov, W, H, 2 * k);
     const ink = new Uint8Array(N);
     for (let i = 0; i < N; i++) ink[i] = !(shade && shade[i]) && cov[i] >= MIN_COVERAGE && cov[i] >= (k >= 4 ? 0.35 : 0.5) * peak[i] ? 1 : 0;
@@ -1098,7 +1094,8 @@
       const region = new Uint8Array(N);
       for (let i = 0; i < N; i++) region[i] = shade[i] && tone[i] > 0 ? 2 : shade[i] || ink[i] ? 1 : 0;
       for (const h of hatchStrokes(region, tone, W, H, spacing, inkColor)) {
-        strokes.push({ points: h.points.map(toImage), widths: h.points.map(() => h.width / k), color: argb(pencilAlpha(h.alpha), h.color), closed: false, pen: "pencil" });
+        const [hx, hy] = h.points[0], dark = h.alpha > SHADE_MAX || !!(penShade && penShade[clamp(Math.round(hy), 0, H - 1) * W + clamp(Math.round(hx), 0, W - 1)]), c = dark && !transparent ? h.color.map((v, ch) => Math.round(bg[ch] + h.alpha * (v - bg[ch]))) : h.color;
+        strokes.push({ points: h.points.map(toImage), widths: h.points.map(() => h.width / k), color: argb(dark ? penAlpha(h.alpha) : pencilAlpha(h.alpha), c), closed: false, pen: dark ? "pen" : "pencil" });
       }
     }
 
@@ -1181,6 +1178,8 @@
     const finish = (chain) => {
       const raw = chain.pts, n = raw.length / 2;
       const at = (i) => Math.round(raw[2 * i + 1]) * W + Math.round(raw[2 * i]);
+      // A scrap shorter than three hatch lines left over shading (a tone edge, a corner the hatching misses) is not a line.
+      if (nearShade && pathLength(raw) < 3 * spacing && raw.every((_, j) => j & 1 || nearShade[at(j >> 1)])) return;
       const flagged = new Uint8Array(n);
       for (const m of chain.marks) for (let i = 0; i < n; i++) if (Math.hypot(raw[2 * i] - m.x, raw[2 * i + 1] - m.y) < m.span + 2 * k) flagged[i] = 1;
       // Cross-sections away from junctions: ink mass across the line (= width x opacity), centroid and peak.

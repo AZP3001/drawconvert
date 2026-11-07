@@ -6,3 +6,7 @@ __pycache__/
 /*.png
 /*.jpg
 /Phone/
+
+# test sets, samples and tools stay local: the repo holds only the website and its docs
+/tests/
+*.sdocx
