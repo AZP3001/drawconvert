@@ -964,8 +964,9 @@
     // away from dark lines; lines are traced from their own coverage: the source with that tone un-composited.
     let shade = shadingMask(src, W, H, k, Math.max(4, Math.max(width, height) / 300) * k);
     if (shade && !transparent) {
-      // A shading region in a colour (judged on its mean, so pale edges and JPEG noise don't decide) is solid
-      // coloured ink: it is traced with the pen like any line, not hatched.
+      // A shading region that is solid colour (judged on its mean, so pale edges and JPEG noise don't decide) is a
+      // coloured line or fill: traced with the pen, not hatched. Solid means most of it within 10 % of its median
+      // coverage (flat colour: 84-94 %); coloured pencil shading is grainy (about 10 %) and stays Pencil hatching.
       const seen = new Uint8Array(N);
       let kept = false;
       for (let i = 0; i < N; i++) {
@@ -977,7 +978,9 @@
           for (let c = 0; c < 3; c++) sum[c] += rgba[4 * p + c];
           for (const o of [1, -1, W, -W]) if (shade[j + o] && !seen[j + o]) { seen[j + o] = 1; region.push(j + o); }
         }
-        if (tinted(sum.map((v) => v / region.length), 6)) for (const j of region) shade[j] = 0;
+        const vals = region.map((j) => src[j]).sort((a, b) => a - b), med = vals[vals.length >> 1];
+        const flat = vals.filter((v) => Math.abs(v - med) < 0.1 * med).length >= 0.5 * vals.length;
+        if (flat && tinted(sum.map((v) => v / region.length), 6)) for (const j of region) shade[j] = 0;
         else kept = true;
       }
       if (!kept) shade = null;
