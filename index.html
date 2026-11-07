@@ -77,8 +77,7 @@
   .edit-box:fullscreen, .stroke-preview:fullscreen { background: var(--bg); padding: 16px; display: flex; flex-direction: column; justify-content: center; align-items: stretch; gap: 10px; }
   .edit-box:fullscreen .previews { flex: 1; min-height: 0; }
   .edit-box:fullscreen .preview { height: 100%; }
-  .stroke-preview:fullscreen { align-items: center; border: 0; border-radius: 0; }
-  .stroke-preview:fullscreen #stroke-canvas { width: auto !important; height: calc(100vh - 32px) !important; max-width: calc(100vw - 32px); }
+  .stroke-preview:fullscreen { height: 100vh; align-items: center; border: 0; border-radius: 0; }
   .stroke-preview { height: 560px; padding: 12px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #171a20; }
   .stroke-preview canvas { display: block; max-width: 100%; height: auto; box-shadow: 0 8px 32px #0008; }
   /* Before/after slider: your picture over the strokes, shown left of the divider. An invisible range input on top
@@ -581,9 +580,9 @@
       let run = null;
       const close = (tEnd, split) => {
         if (run.n) {
-          let a = run.t0 + (run.split ? seam : cap), b = tEnd - (split ? seam : cap), width = spacing;
-          if (b < a) { a = b = (run.t0 + tEnd) / 2; width = clamp(tEnd - run.t0, spacing / 2, spacing); }
-          out.push({ points: a === b ? [at(a)] : [at(a), at(b)], width, alpha: run.sum / run.n, color: colorOf(run.pts) || [0, 0, 0] });
+          // a run too short for a line is dropped: a lone dot reads as noise, not shading
+          const a = run.t0 + (run.split ? seam : cap), b = tEnd - (split ? seam : cap), width = spacing;
+          if (b > a) out.push({ points: [at(a), at(b)], width, alpha: run.sum / run.n, color: colorOf(run.pts) || [0, 0, 0] });
         }
         run = null;
       };
@@ -1503,18 +1502,43 @@
         if (!(have > 0 && want > 0)) return;
         const r = clamp(Math.pow(want / have, 0.8), 0.6, 1.6);
         // A pen line is corrected along its length (each point by the ink around it and its neighbours), a pencil stroke as a whole.
-        if (st.pen === "pen") st.widths = st.widths.map((w, j) => {
-          let a = 0, b = 0;
-          for (let i = Math.max(0, j - 1); i <= Math.min(m - 1, j + 1); i++) { a += pw[i]; b += ph[i]; }
-          return w * (b > 0 && a > 0 ? clamp(Math.pow(a / b, 0.8), 0.6, 1.6) : r);
-        });
+        if (st.pen === "pen") {
+          const f = st.widths.map((w, j) => {
+            let a = 0, b = 0;
+            for (let i = Math.max(0, j - 1); i <= Math.min(m - 1, j + 1); i++) { a += pw[i]; b += ph[i]; }
+            return b > 0 && a > 0 ? clamp(Math.pow(a / b, 0.8), 0.6, 1.6) : r;
+          });
+          const g = smoothAlong(f, st.points, lumpSigma(st));
+          st.widths = st.widths.map((w, j) => w * g[j]);
+        }
         else {
           const tone = Math.min(PENCIL_TONE[PENCIL_TONE.length - 1][1], pencilTone(((st.color >>> 24) & 255) / 255) * r);
           st.color = ((clamp(Math.round(pencilAlphaFor(tone) * 255), 1, 255) << 24) | (st.color & 0xFFFFFF)) >>> 0;
         }
       });
     }
+    // A drawn line swells and thins gradually: no lumps shorter than a few line widths.
+    for (const st of strokes) if (st.pen === "pen") st.widths = smoothAlong(st.widths, st.points, lumpSigma(st));
+    // ... and runs smoothly: sub-pixel zigzag of the traced centre line is ironed out (open ends stay put).
+    for (const st of strokes) if (st.pen === "pen" && st.points.length > 2) {
+      const sig = Math.max(0.75, 0.75 * quantile(st.widths, 0.5)), m = st.points.length;
+      const xs = smoothAlong(st.points.map((p) => p[0]), st.points, sig), ys = smoothAlong(st.points.map((p) => p[1]), st.points, sig);
+      st.points = st.points.map((p, j) => !st.closed && (j === 0 || j === m - 1) ? p : [xs[j], ys[j]]);
+    }
     return { strokes, width, height, transparent };
+  }
+
+  const lumpSigma = (st) => Math.max(1, quantile(st.widths, 0.5));
+  // Gaussian smoothing of per-point values over arc length (points in px, sigma in px).
+  function smoothAlong(values, points, sigma) {
+    const m = values.length, s = new Float64Array(m);
+    for (let j = 1; j < m; j++) s[j] = s[j - 1] + Math.hypot(points[j][0] - points[j - 1][0], points[j][1] - points[j - 1][1]);
+    return values.map((_, j) => {
+      let sum = 0, wsum = 0;
+      for (let i = j; i >= 0 && s[j] - s[i] <= 3 * sigma; i--) { const w = Math.exp(-(((s[j] - s[i]) / sigma) ** 2) / 2); sum += w * values[i]; wsum += w; }
+      for (let i = j + 1; i < m && s[i] - s[j] <= 3 * sigma; i++) { const w = Math.exp(-(((s[i] - s[j]) / sigma) ** 2) / 2); sum += w * values[i]; wsum += w; }
+      return sum / wsum;
+    });
   }
 
   // ======================================================================
@@ -2162,7 +2186,7 @@
 
   // The comparison as large as fits its box (fixed height, as wide as the column), sharp at any size up to 720 px.
   function fitStrokes() {
-    const box = $("stroke-box"), w = box.clientWidth - 24, h = box.clientHeight - 24;
+    const box = $("stroke-box"), pad = 2 * parseFloat(getComputedStyle(box).paddingTop), w = box.clientWidth - pad, h = box.clientHeight - pad;
     const s = Math.min(w / strokeCanvas.width, h / strokeCanvas.height);
     if (!(s > 0)) return;
     strokeCanvas.style.width = Math.floor(strokeCanvas.width * s) + "px";
@@ -2373,6 +2397,7 @@
   });
   document.addEventListener("fullscreenchange", () => {
     for (const button of document.querySelectorAll(".full-btn")) button.textContent = document.fullscreenElement ? "✕ Exit fullscreen" : "⛶ Fullscreen";
+    requestAnimationFrame(fitStrokes);   // keep the comparison's proportions at the new size
   });
   removeBg.addEventListener("change", () => { $("tolerance-row").hidden = !removeBg.checked; editsChanged(); });
   toleranceInput.addEventListener("input", () => {
