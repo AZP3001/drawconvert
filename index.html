@@ -900,6 +900,14 @@
     let transparent = false;
     for (let i = 3; i < width * height * 4; i += 4) if (rgba[i] < 250) { transparent = true; break; }
     const bg = transparent ? null : borderColor(rgba, width, height);
+    // On paper, coverage is the largest channel's distance from it, so a solid light colour (pink, sky blue) reads as
+    // faint ink. Coloured ink is a pen in its own colour, never shading; only grey ink (offset proportional to the paper)
+    // can be pencil. The 24-level floor keeps JPEG noise on grey shading from counting as colour.
+    const tinted = (rgb) => {
+      if (transparent || !rgb) return false;
+      const d = [0, 1, 2].map((c) => rgb[c] - bg[c]), spread = Math.max(...d) - Math.min(...d);
+      return spread > 24 && spread > 0.3 * Math.max(...d.map(Math.abs));
+    };
     const cov0 = new Float32Array(width * height);
     for (let i = 0; i < width * height; i++) {
       const s = i * 4;
@@ -910,7 +918,26 @@
     const src = upscale(cov0, width, height, k), lin = k > 1 ? upscaleLinear(cov0, width, height, k) : src;
     // Shading is hatched with the pencil (below), not traced as lines. Its tone is the mean shading coverage
     // away from dark lines; lines are traced from their own coverage: the source with that tone un-composited.
-    const shade = shadingMask(src, W, H, k, Math.max(4, Math.max(width, height) / 300) * k);
+    let shade = shadingMask(src, W, H, k, Math.max(4, Math.max(width, height) / 300) * k);
+    if (shade && !transparent) {
+      // A shading region in a colour (judged on its mean, so pale edges and JPEG noise don't decide) is solid
+      // coloured ink: it is traced with the pen like any line, not hatched.
+      const seen = new Uint8Array(N);
+      let kept = false;
+      for (let i = 0; i < N; i++) {
+        if (!shade[i] || seen[i]) continue;
+        const region = [i], sum = [0, 0, 0];
+        seen[i] = 1;
+        for (let r = 0; r < region.length; r++) {
+          const j = region[r], p = clamp(Math.floor(((j / W | 0) - 0.5) / k), 0, height - 1) * width + clamp(Math.floor((j % W - 0.5) / k), 0, width - 1);
+          for (let c = 0; c < 3; c++) sum[c] += rgba[4 * p + c];
+          for (const o of [1, -1, W, -W]) if (shade[j + o] && !seen[j + o]) { seen[j + o] = 1; region.push(j + o); }
+        }
+        if (tinted(sum.map((v) => v / region.length))) for (const j of region) shade[j] = 0;
+        else kept = true;
+      }
+      if (!kept) shade = null;
+    }
     const pageScale = pageGeometry(width, height, 2).scale, spacing = PENCIL_SIZE / pageScale * k;
     let cov = src, covMass = lin, tone = null;
     if (shade) {
@@ -961,13 +988,6 @@
       const ch = [[], [], []];
       for (let i = 0; i < pts.length; i += 2) if (isCore(pts[i], pts[i + 1])) pixelColor(pts[i], pts[i + 1]).forEach((v, c) => ch[c].push(v));
       return ch[0].length ? median3(ch) : null;
-    };
-    // On paper, coverage is the largest channel's distance from it, so a solid light colour (pink, sky blue) reads as
-    // faint ink. Coloured ink is a pen in its own colour; only grey ink (offset proportional to the paper) can be pencil.
-    const tinted = (rgb) => {
-      if (transparent || !rgb) return false;
-      const d = rgb.map((v, c) => v - bg[c]);
-      return Math.max(...d) - Math.min(...d) > 0.3 * Math.max(...d.map(Math.abs));
     };
 
     // Pair the straightest same-coloured branches at each crossing so a drawn line stays one stroke.
@@ -1171,7 +1191,9 @@
       // Under 2 image px the peak understates opacity (the pixel is part paper): such a line is drawn opaque at its true
       // mass, in the colour behind the coverage. A translucent ink would look the same, but thin lines are mostly opaque
       // pens, coloured ones too (a quarter-size colour sketch scores 0.785 -> 0.866 soft IoU with this read).
-      const thin = core >= PEN_MIN_ALPHA && measured.length > 0 && quantile(measured.map((i) => mass[i] / tops[i]), 0.5) < 2 * k;
+      // A coloured line's coverage is not its opacity, so un-compositing its thin pixels would over-saturate it.
+      const tint = tinted(edgeColor(raw));
+      const thin = !tint && core >= PEN_MIN_ALPHA && measured.length > 0 && quantile(measured.map((i) => mass[i] / tops[i]), 0.5) < 2 * k;
       if (thin) core = 1;
       let opacity = new Array(n).fill(core), widths;
       if (!measured.length) {
@@ -1252,7 +1274,7 @@
           pen,
         });
       };
-      if (core >= PEN_MIN_ALPHA || tinted(edgeColor(raw))) {
+      if (core >= PEN_MIN_ALPHA || tint) {
         const solid = new Uint8Array(m);
         for (const r of runs) if (r.solid) solid.fill(1, r.a, r.b + 1);
         emit(0, m - 1, "pen", core, runs.every((r) => r.solid) ? null : op.map((o, i) => (solid[i] ? 1 : o / core)));

@@ -548,11 +548,12 @@ function runEdgeCases(core) {
     console.log(`  photographed paper: corners ${[at(2, 2), at(w - 3, 2), at(2, h - 3), at(w - 3, h - 3)].join('/')} after flattening, line ${at(150, 100)}`);
   }
   // Light colours on white paper read as low coverage; they must still be Pen strokes in their own colour, not pencil.
-  for (const rgbIn of [[255, 170, 200], [150, 200, 255], [255, 230, 0]]) {
+  // A thick light line (12 px) must not pass for shading and be hatched.
+  for (const [rgbIn, lw] of [[[255, 170, 200], 4], [[150, 200, 255], 4], [[255, 230, 0], 4], [[90, 190, 240], 4], [[90, 190, 240], 12], [[180, 215, 245], 12]]) {
     const w = 120, h = 60, px = new Uint8ClampedArray(w * h * 4).fill(255);
-    for (let y = 28; y < 32; y++) for (let x = 10; x < 110; x++) px.set(rgbIn, (y * w + x) * 4);
+    for (let y = 30 - lw / 2; y < 30 + lw / 2; y++) for (let x = 10; x < 110; x++) px.set(rgbIn, (y * w + x) * 4);
     const s = core.vectorize(px, w, h, { detail: DEFAULT_DETAIL }).strokes, want = (0xFF000000 | (rgbIn[0] << 16) | (rgbIn[1] << 8) | rgbIn[2]) >>> 0;
-    check(s.length === 1 && s[0].pen === 'pen' && s[0].color === want, `light colour ${rgbIn}: ${s.map((q) => `${q.pen} ${q.color.toString(16)}`)}`);
+    check(s.length === 1 && s[0].pen === 'pen' && s[0].color === want, `light colour ${rgbIn} ${lw} px: ${s.map((q) => `${q.pen} ${q.color.toString(16)}`)}`);
   }
   const refuses = (build, pattern) => { try { build(); return false; } catch (error) { return pattern.test(error.message); } };
   const page = core.pageGeometry(100, 100, 0);
