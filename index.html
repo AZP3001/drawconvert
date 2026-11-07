@@ -980,10 +980,10 @@
       if (!kept) shade = null;
     }
     // Fine lines drawn through shading (hair strands, an eye, a face outline) are ridges: darker than their surroundings
-    // over about 2 px. They leave the shading before its tone is measured, so they are traced as lines over it.
+    // over about 2 px (by 0.12: weaker ridges are pencil grain). They leave the shading before its tone is measured, so they are traced as lines over it.
     if (shade) {
       const local = blur(src, W, H, 2 * k);
-      for (let i = 0; i < N; i++) if (shade[i] && src[i] - local[i] >= 0.08) shade[i] = 0;
+      for (let i = 0; i < N; i++) if (shade[i] && src[i] - local[i] >= 0.12) shade[i] = 0;
     }
     const pageScale = pageGeometry(width, height, 2).scale, spacing = PENCIL_SIZE / pageScale * k;
     let cov = src, covMass = lin, tone = null;
@@ -1308,6 +1308,14 @@
         if (!ch[0].length) for (const i of rawIds) pixelColor(raw[2 * i], raw[2 * i + 1]).forEach((v, c) => ch[c].push(v));
         // The writer stores a point every MAX_SEGMENT page units anyway: take those from the smoothed line between
         // the simplified points, so the stroke follows the curve instead of its chords.
+        // A pen line lays down its colour's coverage over its width: size it so that matches the measured ink (width was
+        // set for opacity `opacity`; the median colour is usually lighter than the line's peak).
+        if (pen === "pen" && !transparent) {
+          const col = median3(ch);
+          let cm = 0;
+          for (let c = 0; c < 3; c++) { const d = col[c] - bg[c], room = d < 0 ? bg[c] : 255 - bg[c]; cm = Math.max(cm, Math.abs(d) / (room >= 48 ? room : 255)); }
+          if (cm > 0.05) for (let i = 0; i < ww.length; i++) ww[i] *= clamp(opacity[a + i] / cm, 1, 1.6);
+        }
         const kept = [], maxStep = 0.95 * MAX_SEGMENT / pageScale * k, wp = quantile(ww, 0.5);
         for (const i of simplifyIndices(pp, ww, epsilon)) {
           for (let j = kept.length ? kept[kept.length - 1] + 1 : i, run = 0; j <= i; j++) {
