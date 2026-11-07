@@ -1376,7 +1376,7 @@
       const shown = new Float32Array(width * height), feet = [];
       for (const st of strokes) {
         const a = ((st.color >>> 24) & 255) / 255, c = inkOf(st.color) * (st.pen === "pencil" ? pencilTone(a) : a);
-        const own = new Map(), P = st.points, Wd = st.widths;
+        const own = new Map(), at = new Map(), P = st.points, Wd = st.widths;
         for (let j = 0; j < P.length; j++) {
           const [x1, y1] = P[j], [x0, y0] = P[Math.max(0, j - 1)], r = Wd[j] / 2;
           const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 0.5));
@@ -1386,12 +1386,12 @@
               for (let x = Math.max(0, Math.floor(cx - r - 1)); x <= Math.min(width - 1, Math.ceil(cx + r + 1)); x++) {
                 // the pixel's share of the stroke's cross-section; the footprint reaches a pixel past the edge
                 const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy), f = clamp(Math.min(d + r, 0.5) - Math.max(d - r, -0.5), 0, 1), p = y * width + x;
-                if (f > 0 || d <= r + 1) own.set(p, Math.max(f, own.get(p) || 0));
+                if (f > 0 || d <= r + 1) { if (!own.has(p) || f > own.get(p)) at.set(p, j); own.set(p, Math.max(f, own.get(p) || 0)); }
               }
           }
         }
         for (const [p, f] of own) shown[p] = 1 - (1 - shown[p]) * (1 - f * c);   // strokes composite over each other
-        feet.push(own);
+        feet.push({ own, at });
       }
       return { shown, feet };
     };
@@ -1414,11 +1414,16 @@
       const { shown, feet } = draw();
       strokes.forEach((st, si) => {
         let want = 0, have = 0;
-        for (const [p] of feet[si]) { want += cov0[p]; have += shown[p]; }
+        const m = st.points.length, pw = new Float64Array(m), ph = new Float64Array(m);
+        for (const [p, j] of feet[si].at) { want += cov0[p]; have += shown[p]; pw[j] += cov0[p]; ph[j] += shown[p]; }
         if (!(have > 0 && want > 0)) return;
         const r = clamp(Math.pow(want / have, 0.6), 0.6, 1.6);
-        // Pen lines only widen: narrowing thin clean lines lost more than it gained on the test drawings.
-        if (st.pen === "pen") st.widths = st.widths.map((w) => w * Math.max(1, r));
+        // A pen line is corrected along its length (each point by the ink around it and its neighbours), a pencil stroke as a whole.
+        if (st.pen === "pen") st.widths = st.widths.map((w, j) => {
+          let a = 0, b = 0;
+          for (let i = Math.max(0, j - 1); i <= Math.min(m - 1, j + 1); i++) { a += pw[i]; b += ph[i]; }
+          return w * (b > 0 && a > 0 ? clamp(Math.pow(a / b, 0.6), 0.6, 1.6) : r);
+        });
         else {
           const tone = Math.min(PENCIL_TONE[PENCIL_TONE.length - 1][1], pencilTone(((st.color >>> 24) & 255) / 255) * r);
           st.color = ((clamp(Math.round(pencilAlphaFor(tone) * 255), 1, 255) << 24) | (st.color & 0xFFFFFF)) >>> 0;
