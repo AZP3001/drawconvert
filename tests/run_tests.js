@@ -565,6 +565,15 @@ function runEdgeCases(core) {
     const want = (0xFF000000 | (ink[0] << 16) | (ink[1] << 8) | ink[2]) >>> 0;
     check(flat === px && s.length === 1 && s[0].pen === 'pen' && s[0].color === want, `${ink} on ${paper}: ${s.map((q) => `${q.pen} ${q.color.toString(16)}`)}`);
   }
+  // Letterbox bars (black, left and right) are cut off, so the cream paper is the paper and only the line is traced.
+  {
+    const w = 200, h = 120, px = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) px.set(x < 20 || x >= 180 ? [0, 0, 0, 255] : [250, 245, 225, 255], (y * w + x) * 4);
+    for (let y = 58; y < 62; y++) for (let x = 40; x < 160; x++) px.set([0, 150, 170, 255], (y * w + x) * 4);
+    const cut = core.trimFrame(px, w, h), s = core.vectorize(cut.rgba, cut.width, cut.height, { detail: DEFAULT_DETAIL }).strokes;
+    check(cut.width === 156 && cut.height === h && s.length === 1 && s[0].color === 0xFF0096AA, `frame trim: ${cut.width}x${cut.height}, ${s.map((q) => `${q.pen} ${q.color.toString(16)}`)}`);
+    console.log(`  letterboxed picture: cut to ${cut.width}x${cut.height}, ${s.length} stroke`);
+  }
   const refuses = (build, pattern) => { try { build(); return false; } catch (error) { return pattern.test(error.message); } };
   const page = core.pageGeometry(100, 100, 0);
   const line = { points: [[10, 10], [20, 20]], pressures: [1, 1], size: 2, color: 0xFF000000 };

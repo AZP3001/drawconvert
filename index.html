@@ -125,7 +125,7 @@
             <input id="split" type="range" min="0" max="100" step="0.1" value="50" aria-label="Comparison divider: your picture on the left, the strokes on the right">
           </div>
         </div>
-        <div class="preview-label" style="margin-top:10px"><span title="Pixel by pixel at your picture's resolution: the ink the strokes share with your picture, divided by all the ink in either, each pixel weighted by its darkness. 100% means identical.">Accuracy — strokes vs. your picture</span><span id="match"></span></div>
+        <div class="preview-label" style="margin-top:10px"><span title="At your picture's resolution: the ink the strokes share with your picture, divided by all the ink in either, each pixel weighted by its strength. Ink is measured against the picture's own paper colour; lines a pixel off still match, and paper grain is ignored. 100% means identical.">Accuracy — strokes vs. your picture</span><span id="match"></span></div>
       </div>
     </section>
 
@@ -258,7 +258,7 @@
   function flattenPaper(rgba, width, height) {
     for (let i = 3; i < rgba.length; i += 4) if (rgba[i] < 250) return rgba;
     // Dark paper (light ink on black or grey): the brightest cells are ink, not paper, so there is nothing to fit.
-    if (borderColor(rgba, width, height).reduce((a, b) => a + b, 0) < 3 * 128) return rgba;
+    if (paperColor(rgba, width, height).reduce((a, b) => a + b, 0) < 3 * 128) return rgba;
     // An evenly lit border is a scan or digital paper: light ink on it (white on cream) must not be fitted as paper.
     const edge = [];
     for (let x = 0; x < width; x++) for (const y of [0, height - 1]) { const i = (y * width + x) * 4; edge.push(rgba[i] + rgba[i + 1] + rgba[i + 2]); }
@@ -318,12 +318,41 @@
     return out;
   }
 
-  function borderColor(rgba, width, height) {
-    const channels = [[], [], []];
-    const take = (x, y) => { const i = (y * width + x) * 4; for (let c = 0; c < 3; c++) channels[c].push(rgba[i + c]); };
-    for (let x = 0; x < width; x++) { take(x, 0); take(x, height - 1); }
-    for (let y = 0; y < height; y++) { take(0, y); take(width - 1, y); }
-    return channels.map((c) => quantile(c, 0.5));
+  // The paper is the image's most common colour (16 levels a channel, mean within that bin), not its border: a frame
+  // or letterbox bars around a drawing would otherwise be taken for the paper.
+  function paperColor(rgba, width, height) {
+    const count = new Uint32Array(4096), sum = new Float64Array(4096 * 3);
+    for (let i = 0; i < width * height * 4; i += 4) {
+      const b = ((rgba[i] >> 4) << 8) | ((rgba[i + 1] >> 4) << 4) | (rgba[i + 2] >> 4);
+      count[b]++; sum[3 * b] += rgba[i]; sum[3 * b + 1] += rgba[i + 1]; sum[3 * b + 2] += rgba[i + 2];
+    }
+    let best = 0;
+    for (let b = 1; b < 4096; b++) if (count[b] > count[best]) best = b;
+    return [0, 1, 2].map((c) => Math.round(sum[3 * best + c] / Math.max(1, count[best])));
+  }
+
+  // Cuts solid bars off the edges (letterbox, frame, scanner bed): rows and columns that are at least 97 % far from the
+  // paper colour, at most a quarter of the image per side, plus 2 px of the bar's blurred edge. Returns the same array
+  // and size when there is no frame, or { rgba, width, height } of the cropped copy.
+  function trimFrame(rgba, width, height) {
+    for (let i = 3; i < rgba.length; i += 4) if (rgba[i] < 250) return { rgba, width, height };
+    const paper = paperColor(rgba, width, height);
+    const far = (x, y) => { const i = (y * width + x) * 4; return Math.max(Math.abs(rgba[i] - paper[0]), Math.abs(rgba[i + 1] - paper[1]), Math.abs(rgba[i + 2] - paper[2])) > 64; };
+    let x0 = 0, x1 = width, y0 = 0, y1 = height;
+    const row = (y) => { let f = 0; for (let x = x0; x < x1; x++) f += far(x, y); return f >= 0.97 * (x1 - x0); };
+    const col = (x) => { let f = 0; for (let y = y0; y < y1; y++) f += far(x, y); return f >= 0.97 * (y1 - y0); };
+    for (let changed = true; changed;) {
+      changed = false;
+      while (x0 < width / 4 && col(x0)) { x0++; changed = true; }
+      while (x1 > 3 * width / 4 && col(x1 - 1)) { x1--; changed = true; }
+      while (y0 < height / 4 && row(y0)) { y0++; changed = true; }
+      while (y1 > 3 * height / 4 && row(y1 - 1)) { y1--; changed = true; }
+    }
+    if (x0 > 0) x0 += 2; if (x1 < width) x1 -= 2; if (y0 > 0) y0 += 2; if (y1 < height) y1 -= 2;
+    if (x0 === 0 && y0 === 0 && x1 === width && y1 === height) return { rgba, width, height };
+    const w = x1 - x0, h = y1 - y0, out = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) out.set(rgba.subarray(((y + y0) * width + x0) * 4, ((y + y0) * width + x1) * 4), y * w * 4);
+    return { rgba: out, width: w, height: h };
   }
 
   // Separable max filter (square window of radius r).
@@ -906,24 +935,26 @@
     const W = width * k + 2, H = height * k + 2, N = W * H;  // 1-cell empty frame: lines may touch the image edge
     let transparent = false;
     for (let i = 3; i < width * height * 4; i += 4) if (rgba[i] < 250) { transparent = true; break; }
-    const bg = transparent ? null : borderColor(rgba, width, height);
+    const bg = transparent ? null : paperColor(rgba, width, height);
     // On paper, coverage is the largest channel's distance from it, so a solid light colour (pink, sky blue) reads as
     // faint ink. Coloured ink is a pen in its own colour, never shading; only grey ink (offset proportional to the paper)
-    // can be pencil. The 24-level floor keeps JPEG noise on grey shading from counting as colour.
-    const tinted = (rgb) => {
+    // can be pencil. The 24-level floor keeps JPEG noise on grey shading from counting as colour (6 on a region's mean, where noise averages out).
+    const tinted = (rgb, floor = 24) => {
       if (transparent || !rgb) return false;
       const d = [0, 1, 2].map((c) => rgb[c] - bg[c]), spread = Math.max(...d) - Math.min(...d);
-      return spread > 24 && spread > 0.3 * Math.max(...d.map(Math.abs));
+      return spread > floor && spread > 0.3 * Math.max(...d.map(Math.abs));
     };
     const cov0 = new Float32Array(width * height);
     for (let i = 0; i < width * height; i++) {
       const s = i * 4;
       // On paper: the largest channel distance from it, as a share of how far that channel can go from the paper
       // (to 0 or to 255), so black on grey paper or white on black is full ink. On white this is distance / 255.
+      // A channel with under 48 levels of room that way is measured out of 255: paper grain a few levels lighter than
+      // near-white paper is not ink.
       let c0 = 0;
       if (!transparent) for (let c = 0; c < 3; c++) {
-        const d = rgba[s + c] - bg[c];
-        c0 = Math.max(c0, d < 0 ? -d / Math.max(1, bg[c]) : d / Math.max(1, 255 - bg[c]));
+        const d = rgba[s + c] - bg[c], room = d < 0 ? bg[c] : 255 - bg[c];
+        c0 = Math.max(c0, Math.abs(d) / (room >= 48 ? room : 255));
       }
       cov0[i] = transparent ? rgba[s + 3] / 255 : Math.min(1, c0);
     }
@@ -946,7 +977,7 @@
           for (let c = 0; c < 3; c++) sum[c] += rgba[4 * p + c];
           for (const o of [1, -1, W, -W]) if (shade[j + o] && !seen[j + o]) { seen[j + o] = 1; region.push(j + o); }
         }
-        if (tinted(sum.map((v) => v / region.length))) for (const j of region) shade[j] = 0;
+        if (tinted(sum.map((v) => v / region.length), 6)) for (const j of region) shade[j] = 0;
         else kept = true;
       }
       if (!kept) shade = null;
@@ -1841,7 +1872,7 @@
     return zipStored(entries, built.trailer);
   }
 
-  global.SdocxCore = { vectorize, pageGeometry, layoutStrokes, buildSdocx, packSdocx, pencilTone, strokeWidths, flattenPaper, MAX_STROKES };
+  global.SdocxCore = { vectorize, paperColor, trimFrame, pageGeometry, layoutStrokes, buildSdocx, packSdocx, pencilTone, strokeWidths, flattenPaper, MAX_STROKES };
 })(globalThis);
 </script>
 
@@ -1859,43 +1890,18 @@
   const detailInput = $("detail");
   const strokeCanvas = $("stroke-canvas");
   const MAX_PROCESS_SIDE = 2048;
-  let selected = null;       // { name, bitmap, pixels (paper flattened), width, height, flattened }
+  let selected = null;       // { name, bitmap, pixels (frame trimmed, paper flattened), width, height, transparent, paper }
   let traced = null;         // vectorize() result for the current detail level
   let previewUrl = null;
   let traceTimer = 0;
 
-  function sampleAutoBackground(bitmap) {
-    const canvas = document.createElement("canvas");
-    canvas.width = 64; canvas.height = 64;
-    const ctx = canvas.getContext("2d", { willReadFrequently: true });
-    ctx.clearRect(0,0,64,64);
-    ctx.drawImage(bitmap,0,0,64,64);
-    const pixels = ctx.getImageData(0,0,64,64).data;
-    const channels = [[],[],[]];
-    let hasTransparency = false;
-    for (let y=0;y<64;y++) for (let x=0;x<64;x++) {
-      if (x<5 || x>=59 || y<5 || y>=59) {
-        const i=(y*64+x)*4;
-        if (pixels[i+3] < 250) hasTransparency = true;
-        if (pixels[i+3] > 32) { channels[0].push(pixels[i]); channels[1].push(pixels[i+1]); channels[2].push(pixels[i+2]); }
-      }
-    }
-    canvas.width=1; canvas.height=1;
-    // Transparent pixels reveal the note page. Use white rather than sampling
-    // the visible drawing strokes (which can otherwise turn the page black).
-    if (hasTransparency || !channels[0].length) return 0xFFFFFFFF;
-    const med = arr => { arr.sort((a,b)=>a-b); return arr[Math.floor(arr.length/2)]; };
-    const r=med(channels[0]), g=med(channels[1]), b=med(channels[2]);
-    return (0xFF000000 | (r<<16) | (g<<8) | b) >>> 0;
-  }
-
-  function chooseBackground(bitmap) {
+  function chooseBackground() {
     const value = $("background").value;
     if (value === "white") return 0xFFFFFFFF;
     if (value === "black") return 0xFF000000;
     if (value === "dark") return 0xFF202124;
     if (value === "warm") return 0xFFFFF7E8;
-    return selected?.flattened ? 0xFFFFFFFF : sampleAutoBackground(bitmap);
+    return selected ? selected.paper : 0xFFFFFFFF;
   }
 
   function sanitizeFilename(value) {
@@ -1921,22 +1927,28 @@
     ctx.clearRect(0, 0, width, height);
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(bitmap, 0, 0, width, height);
-    const raw = ctx.getImageData(0, 0, width, height).data;
+    const full = ctx.getImageData(0, 0, width, height).data;
     canvas.width = 1; canvas.height = 1;
-    // A photo of paper is evened out to white before tracing (and the accuracy compares against that).
-    const pixels = core.flattenPaper(raw, width, height);
-    return { name: file.name, bitmap, pixels, width, height, flattened: pixels !== raw };
+    // Frame bars are cut off (the preview shows the cut picture), then a photo of paper is evened out to white.
+    const cut = core.trimFrame(full, width, height), raw = cut.rgba;
+    if (raw !== full) { bitmap.close?.(); bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(raw), cut.width, cut.height)); }
+    const pixels = core.flattenPaper(raw, cut.width, cut.height);
+    let transparent = false;
+    for (let i = 3; i < pixels.length; i += 4) if (pixels[i] < 250) { transparent = true; break; }
+    // Auto page colour: the paper's (white under transparency, or after a photo was evened out).
+    const [r, g, b] = transparent ? [255, 255, 255] : core.paperColor(pixels, cut.width, cut.height);
+    return { name: file.name, bitmap, pixels, width: cut.width, height: cut.height, transparent, paper: (0xFF000000 | (r << 16) | (g << 8) | b) >>> 0 };
   }
 
   function currentLayout() {
     const geometry = core.pageGeometry(selected.width, selected.height, marginInput.value);
-    return { geometry, strokes: core.layoutStrokes(traced, geometry, chooseBackground(selected.bitmap)) };
+    return { geometry, strokes: core.layoutStrokes(traced, geometry, chooseBackground()) };
   }
 
   function drawPreview() {
     if (!selected || !traced) return;
     const { geometry, strokes } = currentLayout();
-    const background = chooseBackground(selected.bitmap);
+    const background = chooseBackground();
     const maxSide = 520;
     const view = Math.min(maxSide / geometry.width, maxSide / geometry.height);
     const ratio = window.devicePixelRatio || 1;
@@ -2008,17 +2020,33 @@
     paintStrokes(ctx, strokes);
     const drawn = ctx.getImageData(0, 0, width, height).data;
     canvas.width = 1; canvas.height = 1;
-    const bg = [(background >>> 16) & 255, (background >>> 8) & 255, background & 255];
-    let shared = 0, total = 0;
-    for (let i = 0; i < drawn.length; i += 4) {
-      const alpha = pixels[i + 3] / 255;
-      let ours = 0, theirs = 0;
+    // Ink against what it is drawn on: the strokes against the page, the picture against its own paper (a transparent
+    // picture against the page), so a page colour that differs from the paper doesn't count as ink.
+    const rgbOf = (v) => [(v >>> 16) & 255, (v >>> 8) & 255, v & 255];
+    const bg = rgbOf(background), paper = selected.transparent ? bg : rgbOf(selected.paper);
+    const n = width * height, ours = new Float32Array(n), theirs = new Float32Array(n);
+    for (let p = 0; p < n; p++) {
+      const i = 4 * p, alpha = pixels[i + 3] / 255;
       for (let c = 0; c < 3; c++) {
-        ours = Math.max(ours, Math.abs(drawn[i + c] - bg[c]));
-        theirs = Math.max(theirs, alpha * Math.abs(pixels[i + c] - bg[c]));
+        ours[p] = Math.max(ours[p], Math.abs(drawn[i + c] - bg[c]));
+        theirs[p] = Math.max(theirs[p], alpha * Math.abs(pixels[i + c] - paper[c]));
       }
-      shared += Math.min(ours, theirs); total += Math.max(ours, theirs);
     }
+    // Both are blurred over 3 x 3 px, so a line half a pixel off still matches, and ink under NOISE levels (paper grain,
+    // JPEG noise) is not counted.
+    const NOISE = 16;
+    const soft = (a) => {
+      const out = new Float32Array(n);
+      for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+        let sum = 0, cnt = 0;
+        for (let yy = Math.max(0, y - 1); yy <= Math.min(height - 1, y + 1); yy++) for (let xx = Math.max(0, x - 1); xx <= Math.min(width - 1, x + 1); xx++) { sum += a[yy * width + xx]; cnt++; }
+        out[y * width + x] = Math.max(0, sum / cnt - NOISE);
+      }
+      return out;
+    };
+    const a = soft(ours), b = soft(theirs);
+    let shared = 0, total = 0;
+    for (let p = 0; p < n; p++) { shared += Math.min(a[p], b[p]); total += Math.max(a[p], b[p]); }
     return total ? shared / total : 1;
   }
 
@@ -2094,7 +2122,7 @@
       const title = $("note-name").value.trim() || "My Drawing";
       const { geometry, strokes } = currentLayout();
       const now = BigInt(Date.now()) * 1000n + BigInt(Math.floor((performance.now() % 1) * 1000));
-      const result = core.buildSdocx({ title, page: geometry, background: chooseBackground(selected.bitmap), strokes, now });
+      const result = core.buildSdocx({ title, page: geometry, background: chooseBackground(), strokes, now });
       const blob = new Blob([await core.packSdocx(result)], { type: "application/octet-stream" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");

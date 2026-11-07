@@ -12,7 +12,7 @@ Drop in a PNG and download a `.sdocx` note. In Samsung Notes the lines are norma
 2. Drop a PNG on it, or click to pick one. A transparent background works best; drawings on any plain paper colour (white, cream, grey, black) work too, in any ink colour. The note page takes the picture's background colour by default.
 3. Check the **stroke preview**. It is what Samsung Notes will show.
    - **Compare**: drag across the preview. Left of the divider is your picture, right of it the strokes, in the same place on the page.
-   - **Accuracy** under it: how closely the strokes reproduce your picture, pixel by pixel at the picture's own resolution (the ink both share over all the ink in either, weighted by darkness; 100% = identical). It scores the preview, so the Pencil's grain on the phone isn't counted.
+   - **Accuracy** under it: how closely the strokes reproduce your picture, at the picture's own resolution (the ink both share over all the ink in either, weighted by strength; 100% = identical). The picture's ink is measured against its own paper colour, lines a pixel off still match, and paper grain is ignored. It scores the preview, so the Pencil's grain on the phone isn't counted.
    - **Detail**: left smooths the lines, right follows every wiggle.
    - **Page margin**, **page background** and **note name** work as you'd expect.
 4. Click **Convert to .sdocx**, copy the file to the phone and open it in Samsung Notes (My Files, tap the file).
