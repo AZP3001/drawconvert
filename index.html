@@ -48,10 +48,15 @@
   .preview-card { margin-top: 18px; display: none; }
   .preview-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; align-items: start; }
   .preview-cols > div { min-width: 0; }
-  .previews.live-on .preview { height: 440px; }
+  /* Background removal on: picture and live preview side by side, the comparison under both at full width. */
+  .preview-cols.live-on { grid-template-columns: 1fr; }
+  .preview-label { gap: 12px; }
+  .preview-label span:first-child { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .preview-label span:last-child { white-space: nowrap; flex: none; }
+  .preview-cols.live-on > div:last-child { width: calc(50% - 5px); justify-self: center; }
+  .below { min-height: 34px; margin-top: 8px; }
   .preview-label { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin: 0 2px 8px; }
-  .preview { height: 560px; padding: 12px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #fff; overflow: hidden; }
-  .preview img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; box-shadow: 0 8px 32px #0008; }
+  .preview { position: relative; height: 560px; padding: 12px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #fff; overflow: hidden; }
   .previews { display: grid; grid-template-columns: 1fr; gap: 10px; }
   .previews.live-on { grid-template-columns: 1fr 1fr; }
   .preview canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
@@ -60,7 +65,7 @@
   .previews > * { min-width: 0; }
   .live { position: relative; background: repeating-conic-gradient(#d9dce1 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
   .live .compare-tag { left: 8px; }
-  .erase-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+  .erase-row { display: flex; align-items: center; gap: 10px; color: var(--muted); font-size: 12px; }
   .erase-row input[type=range] { flex: 1; }
   .small { padding: 6px 10px; border: 1px solid #3b414d; border-radius: 8px; background: #121419; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
   .small:disabled { opacity: .4; cursor: not-allowed; }
@@ -73,12 +78,12 @@
   .edit-box:fullscreen .previews { flex: 1; min-height: 0; }
   .edit-box:fullscreen .preview { height: 100%; }
   .stroke-preview:fullscreen { align-items: center; border: 0; border-radius: 0; }
-  .stroke-preview:fullscreen #stroke-canvas { width: auto !important; height: calc(100vh - 32px); max-width: calc(100vw - 32px); }
-  .stroke-preview { padding: 12px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #171a20; }
+  .stroke-preview:fullscreen #stroke-canvas { width: auto !important; height: calc(100vh - 32px) !important; max-width: calc(100vw - 32px); }
+  .stroke-preview { height: 560px; padding: 12px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #171a20; }
   .stroke-preview canvas { display: block; max-width: 100%; height: auto; box-shadow: 0 8px 32px #0008; }
   /* Before/after slider: your picture over the strokes, shown left of the divider. An invisible range input on top
      takes the drag (anywhere on the preview), arrow keys included. */
-  .compare { position: relative; max-width: 100%; --split: 50%; }
+  .compare { position: relative; max-width: 100%; --split: 50%; border-radius: 8px; overflow: hidden; }
   #picture-canvas { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; box-shadow: none; clip-path: inset(0 calc(100% - var(--split)) 0 0); }
   .compare::after { content: ""; position: absolute; top: 0; bottom: 0; left: var(--split); width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px #0007; pointer-events: none; z-index: 1; }
   .compare::before { content: "\2194"; position: absolute; top: 50%; left: var(--split); transform: translate(-50%, -50%); width: 30px; height: 30px; border-radius: 50%; background: #fff; color: #111; display: grid; place-items: center; font-size: 16px; box-shadow: 0 1px 6px #0009; pointer-events: none; z-index: 2; }
@@ -115,7 +120,8 @@
     .shell { padding-top: 30px; }
     .layout { grid-template-columns: 1fr; }
     .preview-cols { grid-template-columns: 1fr; }
-    .preview { height: 380px; }
+    .preview-cols.live-on > div:last-child { width: 100%; }
+    .preview, .stroke-preview { height: 420px; }
     .dropzone { min-height: 190px; }
   }
 </style>
@@ -190,25 +196,24 @@
 
   <section class="card preview-card" id="preview-wrap" aria-labelledby="preview-title">
     <h2 id="preview-title">03 — Preview</h2>
-    <div class="preview-cols">
+    <div class="preview-cols" id="preview-cols">
       <div>
-        <div class="preview-label"><span>Image preview — paint over a part (watermark, text) to cut it out</span><span id="dimensions"></span></div>
+        <div class="preview-label"><span>Your image — paint over a part to cut it out</span><span id="dimensions"></span></div>
         <div class="edit-box" id="edit-box">
         <div class="previews" id="previews">
-          <div class="preview" id="preview"><canvas id="preview-canvas" width="1" height="1" role="img" aria-label="Your drawing; paint over it to erase parts before tracing"></canvas></div>
+          <div class="preview" id="preview"><canvas id="preview-canvas" width="1" height="1" role="img" aria-label="Your drawing; paint over it to erase parts before tracing"></canvas><button class="small full-btn corner" type="button" data-full="edit-box">⛶ Fullscreen</button></div>
           <div class="preview live" id="live-box" hidden><span class="compare-tag">Live preview</span><canvas id="live-canvas" width="1" height="1" role="img" aria-label="The drawing as it is traced, background removed"></canvas></div>
         </div>
-        <div class="erase-row">
+        <div class="erase-row below">
           <label for="brush" style="margin:0;font-weight:500">Eraser</label>
           <input id="brush" type="range" min="1" max="15" step="1" value="4" aria-label="Eraser size">
           <button class="small" id="undo-erase" type="button" disabled>Undo</button>
           <button class="small" id="clear-erase" type="button" disabled>Restore all</button>
-          <button class="small full-btn" type="button" data-full="edit-box">⛶ Fullscreen</button>
         </div>
         </div>
       </div>
       <div>
-        <div class="preview-label"><span>Stroke preview — drag across it to compare with your picture</span><span id="stroke-count"></span></div>
+        <div class="preview-label"><span>Strokes — drag to compare</span><span id="stroke-count"></span></div>
         <div class="stroke-preview" id="stroke-box">
           <div class="compare" id="compare">
             <canvas id="stroke-canvas" width="360" height="509" role="img" aria-label="Preview of the generated pen strokes"></canvas>
@@ -218,7 +223,7 @@
           </div>
           <button class="small full-btn corner" type="button" data-full="stroke-box">⛶ Fullscreen</button>
         </div>
-        <div class="preview-label" style="margin-top:10px"><span title="At your picture's resolution: the ink the strokes share with your picture, divided by all the ink in either, each pixel weighted by its strength. Ink is measured against the picture's own paper colour; lines a pixel off still match, and paper grain is ignored. 100% means identical.">Accuracy — strokes vs. your picture</span><span id="match"></span></div>
+        <div class="preview-label below" style="align-items:center;margin-bottom:0"><span title="At your picture's resolution: the ink the strokes share with your picture, divided by all the ink in either, each pixel weighted by its strength. Ink is measured against the picture's own paper colour; lines a pixel off still match, and paper grain is ignored. 100% means identical.">Accuracy — strokes vs. your picture</span><span id="match"></span></div>
       </div>
     </div>
   </section>
@@ -2139,6 +2144,7 @@
     }
     $("live-box").hidden = !removeBg.checked;
     $("previews").classList.toggle("live-on", removeBg.checked);
+    $("preview-cols").classList.toggle("live-on", removeBg.checked);
     $("undo-erase").disabled = !selected.undo.length;
     $("clear-erase").disabled = !selected.erased.some((v) => v);
   }
@@ -2154,6 +2160,16 @@
     return { geometry, strokes: core.layoutStrokes(traced, geometry, chooseBackground()) };
   }
 
+  // The comparison as large as fits its box (fixed height, as wide as the column), sharp at any size up to 720 px.
+  function fitStrokes() {
+    const box = $("stroke-box"), w = box.clientWidth - 24, h = box.clientHeight - 24;
+    const s = Math.min(w / strokeCanvas.width, h / strokeCanvas.height);
+    if (!(s > 0)) return;
+    strokeCanvas.style.width = Math.floor(strokeCanvas.width * s) + "px";
+    strokeCanvas.style.height = Math.floor(strokeCanvas.height * s) + "px";
+  }
+  window.addEventListener("resize", fitStrokes);
+
   function drawPreview() {
     if (!selected || !traced) return;
     const { geometry, strokes } = currentLayout();
@@ -2163,7 +2179,7 @@
     const ratio = window.devicePixelRatio || 1;
     strokeCanvas.width = Math.round(geometry.width * view * ratio);
     strokeCanvas.height = Math.round(geometry.height * view * ratio);
-    strokeCanvas.style.width = Math.round(geometry.width * view) + "px";
+    fitStrokes();
     const ctx = strokeCanvas.getContext("2d");
     ctx.setTransform(view * ratio, 0, 0, view * ratio, 0, 0);
     const pageColor = "#" + (background & 0xFFFFFF).toString(16).padStart(6, "0");
