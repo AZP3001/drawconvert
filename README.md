@@ -26,7 +26,7 @@ Images with a long side over 2048 px are scaled down before tracing.
 3. **Centre lines:** distance transform, then thinning to one-pixel skeletons.
 4. **Lines:** the skeleton becomes a graph, and at every crossing the straightest branches of the same colour are joined. A drawn line stays one line through the lines it crosses.
 5. **Width and colour:** measured across the line on a non-ringing (bilinear) enlargement, stopping at the dip before a neighbouring line so close lines don't widen each other. Even lines get one width; tapered lines keep their profile, and line ends are placed by the ink area they cover. The colour is the median of the line's own pixels. Where a line fades out, it keeps its opacity point by point.
-6. **Strokes:** smoothed (sharp corners stay sharp), simplified (Ramer-Douglas-Peucker, with a tolerance fixed on the page) and written as Samsung Notes *Pen* (InkPen2) and *Pencil* (Pencil2) strokes, with the checksums the app expects. On the phone a Pen stroke ignores pressure and is full width only for its first ~12 ms, then narrows to about half (measured from a screenshot, [FORMAT.md](FORMAT.md) §8). So each line is written as a chain of short Pen strokes, each sized to the width under it, and a taper is a run of shrinking pieces. Semi-transparent ink and fading ends are drawn in the colour they show on the page, so the joints don't darken, and lighter pieces go under darker ones.
+6. **Strokes:** smoothed (sharp corners stay sharp), simplified (Ramer-Douglas-Peucker, with a tolerance fixed on the page) and written as Samsung Notes *Pen* (InkPen2) and *Pencil* (Pencil2) strokes, with the checksums the app expects. On the phone a Pen stroke ignores pressure and narrows to about half when drawn fast, but keeps its full width when drawn slowly (measured from phone screenshots, [FORMAT.md](FORMAT.md) §8). So strokes are written slowly, an even line is one Pen stroke, and a taper is a run of shrinking pieces. Pencil alpha is chosen from the measured tone its grain lays down. Semi-transparent ink and fading ends are drawn in the colour they show on the page, so the joints don't darken, and lighter pieces go under darker ones.
 
 The `.sdocx` stroke format was reverse-engineered from real notes. [FORMAT.md](FORMAT.md) has the layout with byte offsets.
 
@@ -47,7 +47,7 @@ node tests/make_calibration.js     # writes tests/out/calibration.sdocx, a devic
 - the parser decodes the three sample notes (`Notes_*.sdocx`, `Test_*.sdocx`), checksums included;
 - every fixture converts to a `.sdocx` whose structure matches the real notes, with no image layer, and each Pen or Pencil stroke carries the fields of that pen's sample strokes;
 - every stroke round-trips (points, bounding box, colour, size, pressure);
-- the strokes, rendered back with the phone's Pen width (FORMAT.md §8), match the source PNG (IoU above 0.85; 0.8 for 1 px lines and hatched shading, 0.6 for quarter-size inputs scored against the full-size drawing);
+- the strokes, rendered back as the phone draws them (Pen width, Pencil tone; FORMAT.md §8), match the source PNG (IoU above 0.85; 0.8 for 1 px lines and hatched shading, 0.6 for quarter-size inputs scored against the full-size drawing);
 - shading comes out as Pencil strokes whose composited tone is within 0.03 of the source, and line art uses no Pencil at all;
 - no stroke crosses bare paper;
 - each drawn line is traced as one line.
@@ -60,13 +60,13 @@ GitHub Pages serves this repository straight from the `main` branch, so every pu
 
 ## Limits
 
-- Shading comes out as Pencil hatching in 10% tone steps. How Pencil2 renders on the device (its grain, and how it applies alpha) was not checked, so shading may look lighter or grainier than the preview.
+- Shading comes out as Pencil hatching in 10% tone steps. Its tone is calibrated on the phone, but the grain isn't drawn in the preview, and the Pencil can't go darker than about 73%.
 - Solid dark fills come out as thick centre lines, not fills.
 - Below about 2 px, a line's opacity can't be told from its width. Such lines are drawn as thin, opaque lines in the ink colour, so a thin translucent line comes out thinner and stronger than it was. On paper (no transparency) a thin coloured line can come out a little over-saturated. A fade on such a line becomes a taper.
 - A line gone over twice, with paper showing between the passes, can come out as several short strokes.
 - Tracing runs on the page's main thread, so a 2048 px image pauses it for about a second.
-- Each line is a chain of short strokes, so the stroke eraser removes one piece at a time. Use the lasso to select or delete a whole line.
-- The Pen width rule comes from one phone screenshot at the converter's drawing speed. Whether the narrowing follows time or speed is still open, and Pencil2 was not measured. `node tests/make_calibration.js` writes `tests/out/calibration.sdocx`: open it in Samsung Notes, fit the page to the screen and send a screenshot to settle both.
+- A tapering or fading line is a chain of short strokes, so the stroke eraser removes one piece at a time. Use the lasso to select or delete a whole line.
+- The Pen and Pencil rules come from screenshots of one phone. `node tests/make_calibration.js` writes `tests/out/calibration.sdocx` to re-check another device.
 
 ## Credits and license
 

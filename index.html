@@ -877,7 +877,7 @@
     const argb = (alpha, [r, gg, b]) => (((alpha << 24) | (r << 16) | (gg << 8) | b) >>> 0);
     // Pen ink keeps the image's alpha on transparent images (opaque on paper); pencil alpha is the tone.
     const penAlpha = (o) => (transparent ? (o >= 0.9 ? 255 : Math.max(1, Math.round(o * 255))) : 255);
-    const pencilAlpha = (o) => clamp(Math.round(o * 255), 1, 255);
+    const pencilAlpha = (o) => clamp(Math.round(pencilAlphaFor(o) * 255), 1, 255);   // alpha that lays down tone o
     const toImage = ([x, y]) => [(x - 0.5) / k, (y - 0.5) / k];
     const edgeColor = (pts) => {
       const ch = [[], [], []];
@@ -1217,7 +1217,7 @@
     return { width: pageWidth, height: pageHeight, scale, rect: [left, top, left + imageWidth * scale, top + imageHeight * scale] };
   }
 
-  // Pen size carries the line width; pressure is stored as 1 (the device ignores it on InkPen2, see PEN_FADE).
+  // Pen size carries the line width; pressure is stored as 1 (the device ignores it on InkPen2, see PEN_SPEED).
   function layoutStrokes(traced, geometry, background = 0xFFFFFFFF) {
     const [left, top] = geometry.rect, scale = geometry.scale;
     const out = [];
@@ -1240,32 +1240,24 @@
       // percentile flipped with point spacing and dropped short tapers). Pencil: one width, its pressure curve is unverified.
       const low = Math.min(...denseWidths), high = quantile(denseWidths, 0.9);
       const fixed = s.pen === "pencil" || high <= 1.3 * low ? quantile(denseWidths, 0.5) : null;
-      // InkPen2 ignores pressure and narrows with time since pen-down (PEN_FADE), so width is carried by the pen size:
-      // a line becomes pieces short enough to keep their width, each sized to the line under it. Every joint darkens
-      // its edge pixels a little (each stroke is antialiased on its own), so thin lines, which sag less in page units,
-      // get longer pieces. Pieces overlap at joints, so a translucent line (or a fade, by its per-point opacity) is
-      // drawn in the colour it shows over the page, a piece spanning at most PIECE_ALPHA of opacity.
+      // InkPen2 ignores pressure, so width is carried by the pen size: an even line is one stroke, a tapering one
+      // becomes pieces each sized to the line under it. Pieces overlap at joints, so a translucent line (or a fade, by
+      // its per-point opacity) is drawn in the colour it shows over the page, a piece spanning at most PIECE_ALPHA of opacity.
       const cut = s.pen !== "pencil";
       const over = (alpha) => { let c = 0xFF000000; for (const shift of [16, 8, 0]) c |= Math.round(((s.color >>> shift) & 255) * alpha + ((background >>> shift) & 255) * (1 - alpha)) << shift; return c >>> 0; };
       for (let a = 0; a < densePts.length - 1;) {
-        let b = a + 1, ms = stepMs(densePts[a], densePts[b]);
+        let b = a + 1;
         let lo = Math.min(denseWidths[a], denseWidths[b]), hi = Math.max(denseWidths[a], denseWidths[b]);
         let aLo = Math.min(denseAlphas[a], denseAlphas[b]), aHi = Math.max(denseAlphas[a], denseAlphas[b]);
         while (b + 1 < densePts.length && b - a < MAX_STROKE_POINTS - 1) {
-          const next = ms + stepMs(densePts[b], densePts[b + 1]);
           const l = Math.min(lo, denseWidths[b + 1]), h = Math.max(hi, denseWidths[b + 1]);
           const al = Math.min(aLo, denseAlphas[b + 1]), ah = Math.max(aHi, denseAlphas[b + 1]);
-          if (cut && (penFade(next) < 1 - 2 * PIECE_TOL / (fixed ?? h) || (fixed === null && h > PIECE_TAPER * l) || ah - al > PIECE_ALPHA)) break;
-          ms = next; lo = l; hi = h; aLo = al; aHi = ah; b++;
+          if (cut && ((fixed === null && h > PIECE_TAPER * l) || ah - al > PIECE_ALPHA)) break;
+          lo = l; hi = h; aLo = al; aHi = ah; b++;
         }
-        let num = 0, den = 0;
-        for (let i = a, t = 0; i <= b; i++) {
-          if (i > a) t += stepMs(densePts[i - 1], densePts[i]);
-          const r = s.pen === "pencil" ? 1 : penFade(t);
-          num += (fixed ?? denseWidths[i]) * r; den += r * r;
-        }
+        const size = fixed ?? denseWidths.slice(a, b + 1).reduce((sum, w) => sum + w, 0) / (b - a + 1);
         const alpha = denseAlphas.slice(a, b + 1).reduce((sum, v) => sum + v, 0) / (b - a + 1);
-        out.push({ points: densePts.slice(a, b + 1), pressures: new Array(b - a + 1).fill(1), size: clamp(num / den, MIN_PEN_SIZE, MAX_PEN_SIZE), color: cut ? over(alpha) : s.color, pen: s.pen || "pen", alpha });
+        out.push({ points: densePts.slice(a, b + 1), pressures: new Array(b - a + 1).fill(1), size: clamp(size, MIN_PEN_SIZE, MAX_PEN_SIZE), color: cut ? over(alpha) : s.color, pen: s.pen || "pen", alpha });
         a = b;
       }
     }
@@ -1296,28 +1288,26 @@
   const STROKE_FLEX_MASK = 0x258E;     // adv. setting, colour, size, pen name, 0x100, 0x400, 0x2000
   const PEN_TILT = 0.506;              // typical S Pen tilt/orientation in the sample notes
   const PEN_ORIENTATION = -1.571;
-  const PEN_SPEED = 0.5;               // page units per ms, like hand-drawn strokes
+  // InkPen2 ignores pressure and narrows with speed: written at 0.1 units/ms or slower it keeps its full pen size end to
+  // end, at 0.5 or 2 units/ms it drops to ~0.52 within 100-200 units (calibration screenshot, FORMAT.md section 8).
+  const PEN_SPEED = 0.1;               // page units per ms
   const STROKE_GAP_MS = 150;
-  // InkPen2 on the device ignores pressure and narrows with time since pen-down: [ms, width / pen size], measured
-  // from a Samsung Notes screenshot of strokes written at PEN_SPEED (FORMAT.md section 8).
-  const PEN_FADE = [[0, 1], [12, 1], [70, 0.83], [125, 0.713], [175, 0.615], [240, 0.535]];
-  const PIECE_TOL = 0.05;              // page units a piece's width may sag under its fade before the line is cut again
-  const PIECE_TAPER = 1.12;            // and a piece spans at most this width ratio of a tapering line
+  const PIECE_TAPER = 1.05;            // a piece spans at most this width ratio of a tapering line
   const PIECE_ALPHA = 0.05;            // and this much opacity of a fade
+  // Pencil2 grain makes its tone differ from its alpha: [alpha, mean darkness it lays down], same screenshot.
+  const PENCIL_TONE = [[0, 0], [0.1, 0.133], [0.2, 0.183], [0.3, 0.229], [0.4, 0.299], [0.5, 0.386], [0.6, 0.466], [0.7, 0.548], [0.8, 0.608], [0.9, 0.671], [1, 0.726]];
 
   const stepMs = (p, q) => clamp(Math.round(Math.hypot(q[0] - p[0], q[1] - p[1]) / PEN_SPEED), 1, 0xFFFF);
-  function penFade(ms) {
-    for (let i = 1; i < PEN_FADE.length; i++) {
-      const [t1, w1] = PEN_FADE[i], [t0, w0] = PEN_FADE[i - 1];
-      if (ms < t1) return w0 + (w1 - w0) * (Math.max(ms, t0) - t0) / (t1 - t0);
-    }
-    return PEN_FADE[PEN_FADE.length - 1][1];
-  }
-  // Width the device draws at each point of a laid-out stroke. Pencil2 is assumed to follow size x pressure (unverified).
+  const interpolate = (table, x) => {
+    for (let i = 1; i < table.length; i++) if (x <= table[i][0]) return table[i - 1][1] + (table[i][1] - table[i - 1][1]) * (x - table[i - 1][0]) / (table[i][0] - table[i - 1][0]);
+    return table[table.length - 1][1];
+  };
+  const pencilTone = (alpha) => interpolate(PENCIL_TONE, clamp(alpha, 0, 1));
+  const PENCIL_ALPHA = PENCIL_TONE.map(([a, t]) => [t, a]);
+  const pencilAlphaFor = (tone) => interpolate(PENCIL_ALPHA, Math.max(0, tone));   // tones past 0.726 get alpha 1
+  // Width the device draws at each point of a laid-out stroke. Pencil2 is assumed to follow size x pressure (we write 1).
   function strokeWidths(s) {
-    if (s.pen === "pencil") return s.pressures.map((p) => s.size * p);
-    let ms = 0;
-    return s.points.map((p, i) => s.size * penFade(i ? (ms += stepMs(s.points[i - 1], p)) : 0));
+    return s.pen === "pencil" ? s.pressures.map((p) => s.size * p) : s.points.map(() => s.size);
   }
 
   function decodeBase64(value) {
@@ -1722,7 +1712,7 @@
     return { bytes, objects, pageWidth, pageHeight, drawnRect: mainPage.drawnRect };
   }
 
-  global.SdocxCore = { vectorize, pageGeometry, layoutStrokes, buildSdocx, penFade, strokeWidths, MAX_STROKES };
+  global.SdocxCore = { vectorize, pageGeometry, layoutStrokes, buildSdocx, pencilTone, strokeWidths, MAX_STROKES };
 })(globalThis);
 </script>
 
@@ -1846,7 +1836,7 @@
   function paintStrokes(ctx, strokes) {
     ctx.lineCap = "round"; ctx.lineJoin = "round";
     for (const s of strokes) {
-      const a = ((s.color >>> 24) & 255) / 255;
+      const a = s.pen === "pencil" ? core.pencilTone(((s.color >>> 24) & 255) / 255) : ((s.color >>> 24) & 255) / 255;
       ctx.strokeStyle = `rgba(${(s.color >>> 16) & 255},${(s.color >>> 8) & 255},${s.color & 255},${a})`;
       const widths = core.strokeWidths(s);   // what the device draws, not the stored pressure
       if (widths.every((w) => w === widths[0])) {

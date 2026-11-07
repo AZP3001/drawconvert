@@ -1,7 +1,7 @@
 'use strict';
 // Writes tests/out/calibration.sdocx: test strokes to open in Samsung Notes and screenshot, so the device rendering
 // that FORMAT.md section 8 still marks unverified can be measured. Every line runs x 60 -> 660 at the row's y.
-//   y  80  InkPen2 size 8, 0.5 units/ms: the converter's timing, shows the fade (PEN_FADE)
+//   y  80  InkPen2 size 8, 0.5 units/ms: narrows to ~0.52 (measured; the converter now writes at 0.1, full width)
 //   y 150  InkPen2 size 8, 0.1 units/ms         } fade with time, distance or speed?
 //   y 220  InkPen2 size 8, 0.02 units/ms        }
 //   y 290  InkPen2 size 8, 2 units/ms           }

@@ -160,7 +160,7 @@ function renderStrokes(decoded, W, H, toImageX, toImageY, scale) {
   for (const s of decoded) {
     const pts = s.points.map(([x, y]) => [toImageX(x), toImageY(y)]);
     const radii = s.widths.map((w) => w / 2 / scale);
-    const alpha = ((s.color >>> 24) & 255) / 255, color = [(s.color >>> 16) & 255, (s.color >>> 8) & 255, s.color & 255];
+    const alpha = s.alpha ?? ((s.color >>> 24) & 255) / 255, color = [(s.color >>> 16) & 255, (s.color >>> 8) & 255, s.color & 255];
     const painted = new Uint8Array(W * H);
     for (let i = 0; i < pts.length - 1; i++) {
       const [ax, ay] = pts[i], [bx, by] = pts[i + 1], ra = radii[i], rb = radii[i + 1];
@@ -385,11 +385,12 @@ function runFixture(core, fixture, ref, profiles, options) {
   const scale = Math.min((page.width - 2 * margin) / image.width, (page.height - 2 * margin) / image.height);
   const left = (page.width - image.width * scale) / 2, top = (page.height - image.height * scale) / 2;
   const TW = truth.width, TH = truth.height;
-  // Device widths (FORMAT.md section 8): InkPen2 narrows with the stored time since pen-down and ignores pressure.
-  const deviceWidths = (o) => doc.note.stringIds.get(o.stroke.flex.penNameId) === INKPEN2
-    ? o.stroke.timestamps.map((t) => o.stroke.flex.penSize * core.penFade(t - o.stroke.timestamps[0]))
-    : o.stroke.pressures.map((p) => o.stroke.flex.penSize * p);
-  const rendered = renderStrokes(decoded.map((o) => ({ points: o.stroke.points, widths: deviceWidths(o), color: o.stroke.flex.color ?? 0xFF000000 })),
+  // As the device draws them (FORMAT.md section 8): InkPen2 written slowly keeps its pen size and ignores pressure;
+  // Pencil2 lays down the tone its grain gives its alpha.
+  const isPen = (o) => doc.note.stringIds.get(o.stroke.flex.penNameId) === INKPEN2;
+  const deviceWidths = (o) => isPen(o) ? o.stroke.points.map(() => o.stroke.flex.penSize) : o.stroke.pressures.map((p) => o.stroke.flex.penSize * p);
+  const rendered = renderStrokes(decoded.map((o) => ({ points: o.stroke.points, widths: deviceWidths(o), color: o.stroke.flex.color ?? 0xFF000000,
+    alpha: isPen(o) ? undefined : core.pencilTone(((o.stroke.flex.color ?? 0xFF000000) >>> 24) / 255) })),
     TW, TH, (x) => (x - left) / scale * f, (y) => (y - top) / scale * f, scale / f);
   const source = sourceMask(truth);
   let both = 0, either = 0;
