@@ -18,18 +18,30 @@ const OUT = path.join(__dirname, 'out');
 const HTML = path.join(ROOT, 'index.html');
 const SAMPLES = ['Notes_261106_225150.sdocx', 'Notes_261106_225305.sdocx', 'Test_261106_205901.sdocx'];
 const rgb = (r, g, b, a = 1) => [r, g, b, a].map((v) => Math.round(v * 255));
+const onWhite = (r, g, b, a) => rgb(r * a + 1 - a, g * a + 1 - a, b * a + 1 - a);   // translucent ink as the page shows it
 // Drawn lines per fixture (null: passes gone over twice have no single right count) and the colours used in make_fixtures.py.
 const FIXTURES = [
   { name: 'simple_lines', lines: 11, palette: [rgb(0, 0, 0)] },
   { name: 'thick_brush', lines: 6, palette: [rgb(0.09, 0.09, 0.11)] },
-  { name: 'color_sketch', lines: 16, palette: [rgb(0.90, 0.22, 0.21), rgb(0.98, 0.55, 0.0), rgb(0.12, 0.53, 0.90, 0.8),
-    rgb(0.26, 0.63, 0.28, 0.6), rgb(0.43, 0.30, 0.16), rgb(0.56, 0.14, 0.67, 0.7), rgb(0.26, 0.63, 0.28)] },
+  { name: 'color_sketch', lines: 16, palette: [rgb(0.90, 0.22, 0.21), rgb(0.98, 0.55, 0.0), onWhite(0.12, 0.53, 0.90, 0.8),
+    onWhite(0.26, 0.63, 0.28, 0.6), rgb(0.43, 0.30, 0.16), onWhite(0.56, 0.14, 0.67, 0.7), rgb(0.26, 0.63, 0.28)] },
   { name: 'sketchy', lines: null, palette: [rgb(0, 0, 0)] },
+  // 0.8-2 px lines: in this pixel-centre comparison a sub-pixel shift flips whole line pixels, so IoU caps lower.
+  { name: 'thin_lines', lines: 13, palette: [rgb(0, 0, 0)], iouTarget: 0.8 },
+  // Shading is hatched with Pencil2 (tone = alpha, RGB = the ink behind it); lines stay InkPen2.
+  { name: 'shading', lines: 6, palette: [rgb(0.1, 0.1, 0.1)], pencil: [rgb(0, 0, 0)], toneTarget: 0.03, iouTarget: 0.8, fades: true },
+  // Quarter-size copies, rendered at and scored against the full-size drawing (lines a pixel wide or less).
+  { name: 'simple_lines_q', truth: 'simple_lines', lines: 11, palette: [rgb(0, 0, 0)], iouTarget: 0.85 },
+  { name: 'thick_brush_q', truth: 'thick_brush', lines: 6, palette: [rgb(0.09, 0.09, 0.11)] },
+  { name: 'color_sketch_q', truth: 'color_sketch', lines: null, palette: null, iouTarget: 0.6 },
+  { name: 'shading_q', truth: 'shading', lines: null, palette: null, pencil: [rgb(0, 0, 0)], toneTarget: 0.03, iouTarget: 0.6 },
 ];
 const DEFAULT_DETAIL = 60;   // matches the slider's default in the HTML
 const MARGIN_PERCENT = 2;    // matches the margin slider's default
 const IOU_TARGET = 0.85;
 const INKPEN2 = 'com.samsung.android.sdk.pen.pen.preload.InkPen2';
+const PENCIL2 = 'com.samsung.android.sdk.pen.pen.preload.Pencil2';
+const PENCIL_SETTING = '15;';  // Pencil2's advanced-setting string in the samples
 const NOW = 1794001910647890n;  // fixed save time (µs) so outputs are reproducible apart from random UUID bits
 
 let failures = 0;
@@ -96,7 +108,7 @@ function encodePng(width, height, rgba) {
 // Ink coverage = alpha on transparent images, otherwise distance from the paper colour (border median).
 // A pixel is inked when at least half covered relative to the strongest ink nearby (keeps
 // semi-transparent strokes at their drawn width).
-function sourceMask({ width: W, height: H, pixels: px }) {
+function sourceMask({ width: W, height: H, pixels: px }, minCoverage = 0.1, relative = 0.5) {
   let transparent = false;
   for (let i = 3; i < px.length; i += 4) if (px[i] < 250) { transparent = true; break; }
   const paper = [0, 1, 2].map((c) => {
@@ -116,7 +128,7 @@ function sourceMask({ width: W, height: H, pixels: px }) {
       let peak = 0;
       for (let yy = Math.max(0, y - 2); yy <= Math.min(H - 1, y + 2); yy++) for (let xx = Math.max(0, x - 2); xx <= Math.min(W - 1, x + 2); xx++) peak = Math.max(peak, cov[yy * W + xx]);
       const c = cov[y * W + x];
-      mask[y * W + x] = c >= 0.1 && c >= 0.5 * peak ? 1 : 0;
+      mask[y * W + x] = c >= minCoverage && c >= relative * peak ? 1 : 0;
     }
   }
   return mask;
@@ -140,14 +152,14 @@ function inkDistance(mask, W, H) {
 }
 
 // ---------------------------------------------------------------- decoded strokes -> image pixels
-// Each stroke is a chain of round-capped segments whose radius follows the pen width
-// (InkPen2: width = penSize x pressure). A pixel is inked when its centre is inside a stroke.
+// Each stroke is a chain of round-capped segments whose radius follows the width the device draws
+// (deviceWidths). A pixel is inked when its centre is inside a stroke.
 function renderStrokes(decoded, W, H, toImageX, toImageY, scale) {
   const mask = new Uint8Array(W * H);
   const rgba = new Uint8ClampedArray(W * H * 4).fill(255);
   for (const s of decoded) {
     const pts = s.points.map(([x, y]) => [toImageX(x), toImageY(y)]);
-    const radii = s.pressures.map((p) => (s.size * p) / 2 / scale);
+    const radii = s.widths.map((w) => w / 2 / scale);
     const alpha = ((s.color >>> 24) & 255) / 255, color = [(s.color >>> 16) & 255, (s.color >>> 8) & 255, s.color & 255];
     const painted = new Uint8Array(W * H);
     for (let i = 0; i < pts.length - 1; i++) {
@@ -197,11 +209,11 @@ function loadSamples() {
   return docs;
 }
 
-// Reference values every generated stroke must share with real InkPen2 strokes.
-function sampleProfile(docs) {
+// Reference values every generated stroke must share with real strokes of the same pen.
+function sampleProfile(docs, penName = INKPEN2) {
   const ink = [];
   for (const doc of docs) {
-    for (const o of strokesOf(doc)) if (doc.note.stringIds.get(o.stroke.flex.penNameId) === INKPEN2 && o.base.rotation === undefined) ink.push({ o, doc });
+    for (const o of strokesOf(doc)) if (doc.note.stringIds.get(o.stroke.flex.penNameId) === penName && o.base.rotation === undefined) ink.push({ o, doc });
   }
   const set = (fn) => new Set(ink.map(fn));
   const all = (fn) => ink.flatMap(fn);
@@ -221,11 +233,13 @@ function sampleProfile(docs) {
   };
 }
 
-// drawnRect = union of every stroke rect grown by half the pen size, plus 4 (InkPen2).
-function inkDrawnRect(objects, sizeOf) {
+// drawnRect = union of every stroke rect grown by a pad: half the pen size plus 4 for InkPen2 (verified on the
+// samples); the converter gives Pencil2 the pen size plus 4 (no sample stroke sets a side, so unverified).
+const inkPad = (o) => o.stroke.flex.penSize / 2 + 4;
+function inkDrawnRect(objects, padOf) {
   let r = null;
   for (const o of objects) {
-    const pad = sizeOf(o) / 2 + 4, b = o.base.rect;
+    const pad = padOf(o), b = o.base.rect;
     const g = [b[0] - pad, b[1] - pad, b[2] + pad, b[3] + pad];
     r = r ? [Math.min(r[0], g[0]), Math.min(r[1], g[1]), Math.max(r[2], g[2]), Math.max(r[3], g[3])] : g;
   }
@@ -237,7 +251,7 @@ function checkDrawnRectFormula(docs) {
     const page = doc.pages[0], drawn = page.properties.drawnRect;
     const ink = strokesOf(doc).filter((o) => o.page === page && doc.note.stringIds.get(o.stroke.flex.penNameId) === INKPEN2 && o.base.rotation === undefined);
     const others = strokesOf(doc).filter((o) => o.page === page).length - ink.length;
-    const predicted = inkDrawnRect(ink, (o) => o.stroke.flex.penSize);
+    const predicted = inkDrawnRect(ink, inkPad);
     const matched = [0, 1, 2, 3].filter((k) => Math.abs(predicted[k] - drawn[k]) < 1e-3).length;
     const inside = [0, 1].every((k) => predicted[k] >= drawn[k] - 1e-3) && [2, 3].every((k) => predicted[k] <= drawn[k] + 1e-3);
     // Pages holding only plain InkPen2 strokes must match exactly; others only where InkPen2 dominates.
@@ -247,9 +261,11 @@ function checkDrawnRectFormula(docs) {
 }
 
 // ---------------------------------------------------------------- 2-4. one fixture
-function runFixture(core, fixture, ref, profile, options) {
+function runFixture(core, fixture, ref, profiles, options) {
   const { detail, save } = options;
   const image = decodePng(fs.readFileSync(path.join(__dirname, 'fixtures', fixture.name + '.png')));
+  const truth = fixture.truth ? decodePng(fs.readFileSync(path.join(__dirname, 'fixtures', fixture.truth + '.png'))) : image;
+  const f = truth.width / image.width;   // truth pixels per input pixel
   const started = Date.now();
   const traced = core.vectorize(image.pixels, image.width, image.height, { detail });
   const traceMs = Date.now() - started;
@@ -285,7 +301,10 @@ function runFixture(core, fixture, ref, profile, options) {
   check(same(n.titleObject.recordTypes, rn.titleObject.recordTypes), `${label}: title object records`);
   check(n.titleObject.text === title, `${label}: title "${n.titleObject.text}"`);
   check(n.titleObject.recordSizes[2] === options.titleRecordSize(title), `${label}: title text record ${n.titleObject.recordSizes[2]} bytes, samples imply ${options.titleRecordSize(title)}`);
-  check(same([...n.stringIds], [...rn.stringIds]), `${label}: string table ${[...n.stringIds]}`);
+  // Pencil2 joins the table only when used, in the samples' order: descending ids, setting id = name id + 1.
+  const pencils = input.filter((s) => s.pen === 'pencil').length;
+  const wantIds = [...(pencils ? [[3, PENCIL_SETTING], [2, PENCIL2]] : []), ...rn.stringIds];
+  check(same([...n.stringIds], wantIds), `${label}: string table ${[...n.stringIds]}`);
   check(n.currentPenInfo.penName === INKPEN2 && n.currentPenInfo.size === rn.currentPenInfo.size && n.currentPenInfo.rest.equals(rn.currentPenInfo.rest), `${label}: current pen info`);
 
   // --- end_tag.bin and its copy after the ZIP
@@ -331,12 +350,14 @@ function runFixture(core, fixture, ref, profile, options) {
   decoded.forEach((o, i) => {
     const s = o.stroke, f = s.flex, want = input[i];
     if (!want) return;
+    const penName = doc.note.stringIds.get(f.penNameId), profile = profiles.get(penName);
+    if (penName !== (want.pen === 'pencil' ? PENCIL2 : INKPEN2) || !profile) { strokeErr(`stroke ${i} pen ${penName} for ${want.pen}`); return; }
     const base = JSON.stringify([o.type, o.childCount, o.base.size, o.base.flexOffset, o.base.mask1, o.base.flexMask, o.base.version, o.base.reserved32, o.base.reserved8]);
     if (!profile.base.has(base)) strokeErr(`stroke ${i} base record ${base} unlike samples`);
     if (o.base.pageWidth !== doc.pages[0].width || o.base.pageHeight !== doc.pages[0].height) strokeErr(`stroke ${i} base page size ${o.base.pageWidth}x${o.base.pageHeight}`);
     if (!(o.base.modifiedTime > 0n)) strokeErr(`stroke ${i} has no pen-up time`);
     if (!profile.strokeMask1.has(s.mask1) || !profile.strokeFlexMask.has(s.flexMask) || !profile.tail.has(s.tail)) strokeErr(`stroke ${i} masks 0x${s.mask1.toString(16)}/0x${s.flexMask.toString(16)} tail ${s.tail}`);
-    if (doc.note.stringIds.get(f.penNameId) !== INKPEN2 || !profile.advanced.has(doc.note.stringIds.get(f.advancedSettingId))) strokeErr(`stroke ${i} pen ids`);
+    if (!profile.advanced.has(doc.note.stringIds.get(f.advancedSettingId))) strokeErr(`stroke ${i} pen setting`);
     if (f.float100 !== f.penSize || !profile.int400.has(f.int400) || !profile.float2000.has(f.float2000)) strokeErr(`stroke ${i} pen fields`);
     if (s.tilts.some((v) => v < profile.tilt[0] || v > profile.tilt[1]) || s.orientations.some((v) => v < profile.orientation[0] || v > profile.orientation[1])) strokeErr(`stroke ${i} tilt/orientation outside sample range`);
     if (!profile.t0.has(s.timestamps[0]) || s.timestamps.some((t, k) => k && t <= s.timestamps[k - 1])) strokeErr(`stroke ${i} timestamps`);
@@ -355,7 +376,7 @@ function runFixture(core, fixture, ref, profile, options) {
     // one 1/4096 step: deltas round to nearest except where they are held inside [0, 1]
     if (!(pressureErr <= 1 / 4096 + 1e-6) || s.pressures.some((p) => p < 0 || p > 1)) strokeErr(`stroke ${i} pressure error ${pressureErr}`);
   });
-  const predicted = inkDrawnRect(decoded, (o) => o.stroke.flex.penSize);
+  const predicted = inkDrawnRect(decoded, (o) => (doc.note.stringIds.get(o.stroke.flex.penNameId) === PENCIL2 ? o.stroke.flex.penSize + 4 : inkPad(o)));
   check(predicted.every((v, k) => Math.abs(v - doc.pages[0].properties.drawnRect[k]) < 1e-6), `${label}: drawnRect ${doc.pages[0].properties.drawnRect} != formula ${predicted}`);
 
   // --- render decoded strokes back onto the source image grid and compare inked pixels
@@ -363,11 +384,16 @@ function runFixture(core, fixture, ref, profile, options) {
   const margin = Math.round(Math.min(page.width, page.height) * MARGIN_PERCENT / 100);
   const scale = Math.min((page.width - 2 * margin) / image.width, (page.height - 2 * margin) / image.height);
   const left = (page.width - image.width * scale) / 2, top = (page.height - image.height * scale) / 2;
-  const rendered = renderStrokes(decoded.map((o) => ({ points: o.stroke.points, pressures: o.stroke.pressures, size: o.stroke.flex.penSize, color: o.stroke.flex.color ?? 0xFF000000 })),
-    image.width, image.height, (x) => (x - left) / scale, (y) => (y - top) / scale, scale);
-  const source = sourceMask(image);
+  const TW = truth.width, TH = truth.height;
+  // Device widths (FORMAT.md section 8): InkPen2 narrows with the stored time since pen-down and ignores pressure.
+  const deviceWidths = (o) => doc.note.stringIds.get(o.stroke.flex.penNameId) === INKPEN2
+    ? o.stroke.timestamps.map((t) => o.stroke.flex.penSize * core.penFade(t - o.stroke.timestamps[0]))
+    : o.stroke.pressures.map((p) => o.stroke.flex.penSize * p);
+  const rendered = renderStrokes(decoded.map((o) => ({ points: o.stroke.points, widths: deviceWidths(o), color: o.stroke.flex.color ?? 0xFF000000 })),
+    TW, TH, (x) => (x - left) / scale * f, (y) => (y - top) / scale * f, scale / f);
+  const source = sourceMask(truth);
   let both = 0, either = 0;
-  const diff = new Uint8ClampedArray(image.width * image.height * 4);
+  const diff = new Uint8ClampedArray(TW * TH * 4);
   for (let i = 0; i < source.length; i++) {
     const a = source[i], b = rendered.mask[i];
     if (a && b) both++;
@@ -376,41 +402,66 @@ function runFixture(core, fixture, ref, profile, options) {
     diff.set([...c, 255], i * 4);
   }
   const iou = either ? both / either : 0;
-  // Every stroke centre line must stay on the drawing: within half its width + 2 px of an inked pixel.
-  const toInk = inkDistance(source, image.width, image.height);
+  // Every stroke centre line must stay on the drawing: within half its width + 2 input px of any visible ink.
+  const toInk = inkDistance(sourceMask(truth, 0.03, 0), TW, TH);
   let offInk = 0, worstOff = 0;
   for (const o of decoded) {
-    const s = o.stroke, pts = s.points.map(([x, y]) => [(x - left) / scale, (y - top) / scale]);
-    for (let i = 1; i < pts.length; i++) {
-      const [ax, ay] = pts[i - 1], [bx, by] = pts[i], steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay)));
+    const s = o.stroke, pts = s.points.map(([x, y]) => [(x - left) / scale * f, (y - top) / scale * f]), ws = deviceWidths(o);
+    for (let i = 0; i < pts.length; i++) {
+      const [ax, ay] = pts[Math.max(0, i - 1)], [bx, by] = pts[i], steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay)));
       for (let k = 0; k <= steps; k++) {
-        const t = k / steps, x = clampInt(ax + (bx - ax) * t, image.width), y = clampInt(ay + (by - ay) * t, image.height);
-        const width = s.flex.penSize * (s.pressures[i - 1] + (s.pressures[i] - s.pressures[i - 1]) * t) / scale;
-        const over = toInk[y * image.width + x] - (2 + width / 2);
+        const t = k / steps, x = clampInt(ax + (bx - ax) * t, TW), y = clampInt(ay + (by - ay) * t, TH);
+        const width = (ws[Math.max(0, i - 1)] + (ws[i] - ws[Math.max(0, i - 1)]) * t) / scale * f;
+        const over = toInk[y * TW + x] - (2 * f + width / 2);
         if (over > 0) { offInk++; worstOff = Math.max(worstOff, over); }
       }
     }
   }
   if (save) {
-    fs.writeFileSync(path.join(OUT, `${fixture.name}.strokes.png`), encodePng(image.width, image.height, rendered.rgba));
-    fs.writeFileSync(path.join(OUT, `${fixture.name}.diff.png`), encodePng(image.width, image.height, diff));
+    fs.writeFileSync(path.join(OUT, `${fixture.name}.strokes.png`), encodePng(TW, TH, rendered.rgba));
+    fs.writeFileSync(path.join(OUT, `${fixture.name}.diff.png`), encodePng(TW, TH, diff));
+  }
+  // Tone: mean difference of darkness (source composited on white vs. the composited strokes), both box-blurred
+  // over a few pixels so hatching is compared as the tone it lays down.
+  let toneErr = 0;
+  if (fixture.toneTarget) {
+    const darkness = (px, alpha) => { const d = new Float32Array(TW * TH); for (let i = 0; i < TW * TH; i++) { const a = alpha ? px[i * 4 + 3] / 255 : 1; d[i] = Math.max(...[0, 1, 2].map((c) => 255 - (px[i * 4 + c] * a + 255 * (1 - a)))) / 255; } return d; };
+    const blur = (src, r) => { const out = new Float32Array(src.length); for (let y = 0; y < TH; y++) for (let x = 0; x < TW; x++) { let sum = 0, n = 0; for (let yy = Math.max(0, y - r); yy <= Math.min(TH - 1, y + r); yy++) for (let xx = Math.max(0, x - r); xx <= Math.min(TW - 1, x + r); xx++) { sum += src[yy * TW + xx]; n++; } out[y * TW + x] = sum / n; } return out; };
+    const r = Math.max(2, Math.round(3 * f));
+    const a = blur(darkness(truth.pixels, true), r), b = blur(darkness(rendered.rgba, false), r);
+    let n = 0;
+    for (let i = 0; i < a.length; i++) if (a[i] > 0.03 || b[i] > 0.03) { toneErr += Math.abs(a[i] - b[i]); n++; }
+    toneErr = n ? toneErr / n : 0;
   }
 
-  // --- quality: IoU, one drawn line = one stroke, colours from the source pixels
+  // --- quality: IoU, one drawn line = one traced line (written as pieces), colours from the source pixels
   const points = decoded.reduce((sum, o) => sum + o.stroke.pointCount, 0);
-  console.log(`  ${label}: ${decoded.length} strokes, ${points} points, IoU ${iou.toFixed(4)}, traced in ${traceMs} ms, ${built.bytes.length} bytes`);
+  const isPencil = (o) => doc.note.stringIds.get(o.stroke.flex.penNameId) === PENCIL2;
+  const pens = decoded.filter((o) => !isPencil(o)), pencilCount = decoded.length - pens.length;
+  const penLines = traced.strokes.filter((s) => s.pen !== 'pencil').length;
+  console.log(`  ${label}: ${penLines} pen lines in ${pens.length} strokes + ${pencilCount} pencil strokes, ${points} points, IoU ${iou.toFixed(4)}${fixture.toneTarget ? `, tone error ${toneErr.toFixed(4)}` : ''}, traced in ${traceMs} ms, ${built.bytes.length} bytes`);
   {
-    check(iou > IOU_TARGET, `${label}: IoU ${iou.toFixed(4)} <= ${IOU_TARGET}`);
+    const iouTarget = fixture.iouTarget ?? IOU_TARGET;
+    check(iou > iouTarget, `${label}: IoU ${iou.toFixed(4)} <= ${iouTarget}`);
     check(offInk === 0, `${label}: ${offInk} stroke samples off the ink (worst ${worstOff.toFixed(1)} px beyond the line)`);
-    if (fixture.lines !== null) check(decoded.length === fixture.lines, `${label}: ${decoded.length} strokes for ${fixture.lines} drawn lines`);
+    if (fixture.lines !== null) check(penLines === fixture.lines, `${label}: ${penLines} pen lines for ${fixture.lines} drawn lines`);
+    // Line art stays all pen; shading must come out as pencil and match the source tone.
+    check(fixture.pencil ? pencilCount > 0 : pencilCount === 0, `${label}: ${pencilCount} pencil strokes`);
+    if (fixture.toneTarget) check(toneErr < fixture.toneTarget, `${label}: tone error ${toneErr.toFixed(4)} >= ${fixture.toneTarget}`);
+    const inPalette = (palette, argb, alphaToo) => palette.findIndex((p) => Math.max(Math.abs(p[0] - argb[0]), Math.abs(p[1] - argb[1]), Math.abs(p[2] - argb[2])) <= 12 && (!alphaToo || Math.abs(p[3] - argb[3]) <= 26));
     const used = new Set();
     for (const o of decoded) {
       const c = o.stroke.flex.color ?? 0xFF000000;
       const argb = [(c >>> 16) & 255, (c >>> 8) & 255, c & 255, c >>> 24];
-      const k = fixture.palette.findIndex((p) => Math.max(Math.abs(p[0] - argb[0]), Math.abs(p[1] - argb[1]), Math.abs(p[2] - argb[2])) <= 12 && Math.abs(p[3] - argb[3]) <= 26);
-      if (check(k >= 0, `${label}: stroke colour ${argb} not in the drawing's palette`)) used.add(k);
+      if (isPencil(o)) { if (fixture.pencil) check(inPalette(fixture.pencil, argb, false) >= 0 && argb[3] > 0, `${label}: pencil colour ${argb} not the shading ink`); continue; }
+      if (!fixture.palette) continue;
+      const k = inPalette(fixture.palette, argb, true);
+      // A fading line is drawn in its colour composited over the white page, at the opacity under each piece.
+      const over = (a) => fixture.palette.map((p) => p.map((v, ch) => (ch < 3 ? v * a + 255 * (1 - a) : 255)));
+      const faded = fixture.fades && k < 0 && Array.from({ length: 100 }, (_, i) => i / 100).some((a) => inPalette(over(a), argb, true) >= 0);
+      if (check(k >= 0 || faded, `${label}: stroke colour ${argb} not in the drawing's palette`) && k >= 0) used.add(k);
     }
-    check(used.size === fixture.palette.length, `${label}: ${fixture.palette.length - used.size} drawing colours missing`);
+    if (fixture.palette) check(used.size === fixture.palette.length, `${label}: ${fixture.palette.length - used.size} drawing colours missing`);
   }
   return { iou, strokes: decoded.length };
 }
@@ -430,7 +481,10 @@ function main() {
   checkDrawnRectFormula(docs);
   const ref = docs[0];
   const titled = docs[2];
-  const profile = sampleProfile(docs);
+  const profile = sampleProfile(docs), pencilProfile = sampleProfile(docs, PENCIL2);
+  const profiles = new Map([[INKPEN2, profile], [PENCIL2, pencilProfile]]);
+  check(pencilProfile.strokeCount > 0 && pencilProfile.advanced.has(PENCIL_SETTING), `Pencil2 sample strokes: ${pencilProfile.strokeCount}, settings ${[...pencilProfile.advanced]}`);
+  console.log(`  Pencil2 profile from ${pencilProfile.strokeCount} sample strokes: mask1 ${[...pencilProfile.strokeMask1].map((v) => '0x' + v.toString(16))}, flex ${[...pencilProfile.strokeFlexMask].map((v) => '0x' + v.toString(16))}, float2000 ${[...pencilProfile.float2000].map((v) => v.toFixed(4))}`);
   console.log(`  InkPen2 profile from ${profile.strokeCount} sample strokes: mask1 ${[...profile.strokeMask1].map((v) => '0x' + v.toString(16))}, flex ${[...profile.strokeFlexMask].map((v) => '0x' + v.toString(16))}, tilt ${profile.tilt.map((v) => v.toFixed(3))}, orientation ${profile.orientation.map((v) => v.toFixed(3))}`);
   // Title text record: 105 bytes empty; samples show +2 bytes per character plus one paragraph span block.
   const spanBytes = titled.note.titleObject.recordSizes[2] - ref.note.titleObject.recordSizes[2] - 2 * titled.note.titleObject.text.length;
@@ -439,7 +493,7 @@ function main() {
   console.log('Fixtures (generated .sdocx re-parsed, rendered back, compared):');
   for (const fixture of FIXTURES) {
     try {
-      for (const detail of [DEFAULT_DETAIL, 0, 100]) runFixture(core, fixture, ref, profile, { detail, save: detail === DEFAULT_DETAIL, titleRecordSize });
+      for (const detail of [DEFAULT_DETAIL, 0, 100]) runFixture(core, fixture, ref, profiles, { detail, save: detail === DEFAULT_DETAIL, titleRecordSize });
     } catch (error) {
       check(false, `${fixture.name}: ${error.stack}`);
     }
@@ -467,13 +521,14 @@ function runEdgeCases(core) {
   for (const [name, w, h, ink, expected] of cases) {
     const started = Date.now();
     const traced = core.vectorize(image(w, h, ink), w, h, { detail: DEFAULT_DETAIL });
-    let parsed = 0;
+    let parsed = 0, written = 0;
     if (traced.strokes.length) {
       const geometry = core.pageGeometry(w, h, MARGIN_PERCENT);
-      const built = core.buildSdocx({ title: name, page: geometry, background: 0xFFFFFFFF, strokes: core.layoutStrokes(traced, geometry), now: NOW });
-      parsed = strokesOf(parseSdocx(Buffer.from(built.bytes))).length;
+      const layout = core.layoutStrokes(traced, geometry);
+      const built = core.buildSdocx({ title: name, page: geometry, background: 0xFFFFFFFF, strokes: layout, now: NOW });
+      parsed = strokesOf(parseSdocx(Buffer.from(built.bytes))).length; written = layout.length;
     }
-    check(traced.strokes.length === expected && parsed === expected, `${name}: ${traced.strokes.length} strokes traced, ${parsed} parsed, expected ${expected}`);
+    check(traced.strokes.length === expected && parsed === written, `${name}: ${traced.strokes.length} lines traced (expected ${expected}), ${parsed} of ${written} strokes parsed`);
     console.log(`  ${name}: ${traced.strokes.length} strokes in ${Date.now() - started} ms`);
   }
   const refuses = (build, pattern) => { try { build(); return false; } catch (error) { return pattern.test(error.message); } };

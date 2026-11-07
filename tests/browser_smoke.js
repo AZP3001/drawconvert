@@ -10,7 +10,7 @@ const { spawn } = require('child_process');
 const { parseSdocx, strokesOf } = require('./sdocx_parser.js');
 
 const HTML = path.join(__dirname, '..', 'index.html');
-const FIXTURES = ['simple_lines', 'thick_brush', 'color_sketch'];
+const FIXTURES = ['simple_lines', 'thick_brush', 'color_sketch', 'shading'];
 
 function findChrome() {
   if (process.env.CHROME) return process.env.CHROME;
@@ -95,6 +95,9 @@ async function main() {
     };
     const document_error = (status) => /could not|failed|no lines|too many|please/i.test(status);
     const inkedPixels = 'new Promise((resolve) => requestAnimationFrame(() => { const c = document.getElementById("stroke-canvas"); const d = c.getContext("2d").getImageData(0, 0, c.width, c.height).data; let n = 0; for (let i = 0; i < d.length; i += 4) if (d[i] < 200 || d[i + 1] < 200 || d[i + 2] < 200) n++; resolve(n); }))';
+    // Comparison slider: the picture canvas must sit exactly under the strokes (ink overlap of the two canvases).
+    const pictureOverlap = 'new Promise((resolve) => requestAnimationFrame(() => { const px = (id) => { const c = document.getElementById(id); return c.getContext("2d").getImageData(0, 0, c.width, c.height).data; }; const a = px("stroke-canvas"), b = px("picture-canvas"); let lo = 0, hi = 0; for (let i = 0; i < a.length; i += 4) { const x = 255 - Math.min(a[i], a[i + 1], a[i + 2]), y = 255 - Math.min(b[i], b[i + 1], b[i + 2]); lo += Math.min(x, y); hi += Math.max(x, y); } resolve(lo / hi); }))';
+    const moveDivider = '(() => { const s = document.getElementById("split"); s.value = "30"; s.dispatchEvent(new Event("input")); return document.getElementById("compare").style.getPropertyValue("--split"); })()';
 
     for (const name of FIXTURES) {
       const { root } = await page('DOM.getDocument');
@@ -103,8 +106,10 @@ async function main() {
       const status = await waitStatus(`${name} trace`);
       const count = await evaluate('document.getElementById("stroke-count").textContent');
       const inked = await evaluate(inkedPixels);
-      const strokes = Number(count.replace(/[^\d].*$/, '').replace(/\D/g, ''));
+      const strokes = Number((count.match(/^([\d,]+)/) || [])[1]?.replace(/,/g, ''));   // "1,195 strokes · …"
       if (!(strokes > 0 && inked > 500)) { failures++; console.log(`  FAIL ${name}: preview shows ${count}, ${inked} inked canvas pixels`); }
+      const overlap = await evaluate(pictureOverlap), split = await evaluate(moveDivider);
+      if (!(overlap > 0.8) || split !== '30%') { failures++; console.log(`  FAIL ${name}: picture overlaps the strokes ${overlap.toFixed(3)}, divider at "${split}"`); }
       // Exercise every setting: detail re-trace, margin and background redraw.
       await evaluate('(() => { const d = document.getElementById("detail"); d.value = "20"; d.dispatchEvent(new Event("input")); })()');
       await new Promise((r) => setTimeout(r, 400));
@@ -113,6 +118,8 @@ async function main() {
       await evaluate(`(() => { const d = document.getElementById("detail"); d.value = "60"; d.dispatchEvent(new Event("input")); document.getElementById("note-name").value = ${JSON.stringify(name)}; })()`);
       await new Promise((r) => setTimeout(r, 400));
       await waitStatus(`${name} re-trace`);
+      // Lines are written as pieces whose count follows the page scale, so compare with the preview as converted (margin 6).
+      const shown = Number(((await evaluate('document.getElementById("stroke-count").textContent')).match(/^([\d,]+)/) || [])[1]?.replace(/,/g, ''));
       const done = waitFor((m) => m.method === 'Browser.downloadProgress' && m.params.state === 'completed', `${name} download`);
       await evaluate('document.getElementById("convert").click()');
       await done;
@@ -121,9 +128,12 @@ async function main() {
       const doc = parseSdocx(fs.readFileSync(file));
       const written = strokesOf(doc).length;
       const reported = Number((final.match(/([\d,]+) strokes/) || [])[1]?.replace(/,/g, ''));
-      if (written !== reported || written !== strokes) { failures++; console.log(`  FAIL ${name}: preview ${strokes}, status ${reported}, file ${written} strokes`); }
+      if (written !== reported || written !== shown) { failures++; console.log(`  FAIL ${name}: preview ${shown}, status ${reported}, file ${written} strokes`); }
       if (doc.pages[0].properties.bgColor === undefined) { failures++; console.log(`  FAIL ${name}: page background missing`); }
-      console.log(`  ${name}: ${status} | preview ${count}, ${inked} inked px | downloaded ${path.basename(file)} → ${written} strokes, parses OK`);
+      // The accuracy shown under the preview: a misplaced or unpainted comparison scores far below the fixtures' ~90-99 %.
+      const match = await evaluate('document.getElementById("match").textContent');
+      if (!(parseFloat(match) >= 85 && parseFloat(match) <= 100)) { failures++; console.log(`  FAIL ${name}: accuracy shows "${match}"`); }
+      console.log(`  ${name}: ${status} | preview ${count}, ${inked} inked px, accuracy ${match}, picture overlap ${overlap.toFixed(3)} | downloaded ${path.basename(file)} → ${written} strokes, parses OK`);
     }
   } finally {
     ws.close();

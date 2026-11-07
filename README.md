@@ -2,7 +2,7 @@
 
 Turn line art into real, editable **Samsung Notes** pen strokes.
 
-Drop in a PNG and download a `.sdocx` note. In Samsung Notes every line is a normal pen stroke: select it, move it, remove it with the stroke eraser, and draw over it, the same as importing line art in Ibis Paint X. Nothing is embedded as an image, and nothing is uploaded: the converter is a single HTML file that runs in your browser.
+Drop in a PNG and download a `.sdocx` note. In Samsung Notes the lines are normal pen strokes: select them, move them, erase them and draw over them, the same as importing line art in Ibis Paint X. Nothing is embedded as an image, and nothing is uploaded: the converter is a single HTML file that runs in your browser.
 
 ![The converter with a coloured sketch loaded and its stroke preview](docs/screenshot.png)
 
@@ -11,6 +11,8 @@ Drop in a PNG and download a `.sdocx` note. In Samsung Notes every line is a nor
 1. Open **https://azp3001.github.io/drawconvert/** in Chrome or Edge, on a computer or on the phone. You can also download `index.html` and open it locally; it works offline. Either way, nothing is uploaded.
 2. Drop a PNG on it, or click to pick one. A transparent background works best; drawings on plain white paper work too.
 3. Check the **stroke preview**. It is what Samsung Notes will show.
+   - **Compare**: drag across the preview. Left of the divider is your picture, right of it the strokes, in the same place on the page.
+   - **Accuracy** under it: how closely the strokes reproduce your picture, pixel by pixel at the picture's own resolution (the ink both share over all the ink in either, weighted by darkness; 100% = identical). It scores the preview, so the Pencil's grain on the phone isn't counted.
    - **Detail**: left smooths the lines, right follows every wiggle.
    - **Page margin**, **page background** and **note name** work as you'd expect.
 4. Click **Convert to .sdocx**, copy the file to the phone and open it in Samsung Notes (My Files, tap the file).
@@ -19,11 +21,12 @@ Images with a long side over 2048 px are scaled down before tracing.
 
 ## How it works
 
-1. **Ink:** alpha for transparent images, distance from the paper colour for opaque ones.
-2. **Centre lines:** distance transform, then thinning to one-pixel skeletons.
-3. **One line = one stroke:** the skeleton becomes a graph, and at every crossing the straightest branches of the same colour are joined. A drawn line stays one stroke through the lines it crosses.
-4. **Width and colour:** measured across the line. Even lines get one pen size; tapered lines keep their taper through pen pressure. The colour is the median of the line's own pixels, and semi-transparent ink keeps its alpha.
-5. **Strokes:** smoothed, simplified (Ramer-Douglas-Peucker) and written as Samsung Notes *Pen* (InkPen2) strokes, with the checksums the app expects.
+1. **Ink:** alpha for transparent images, distance from the paper colour for opaque ones. Images under 1600 px are traced on a bicubic enlargement (up to 8×), so thin and low-resolution lines get sub-pixel centres and widths.
+2. **Shading:** broad, light ink (gradients, flat tones, pencil grain) is separated from the lines and hatched with the *Pencil* (Pencil2): 45° strokes that tile the area, each with the alpha of the tone under it. Lines over shading are measured on their own, with the shading taken out.
+3. **Centre lines:** distance transform, then thinning to one-pixel skeletons.
+4. **Lines:** the skeleton becomes a graph, and at every crossing the straightest branches of the same colour are joined. A drawn line stays one line through the lines it crosses.
+5. **Width and colour:** measured across the line on a non-ringing (bilinear) enlargement, stopping at the dip before a neighbouring line so close lines don't widen each other. Even lines get one width; tapered lines keep their profile, and line ends are placed by the ink area they cover. The colour is the median of the line's own pixels. Where a line fades out, it keeps its opacity point by point.
+6. **Strokes:** smoothed (sharp corners stay sharp), simplified (Ramer-Douglas-Peucker, with a tolerance fixed on the page) and written as Samsung Notes *Pen* (InkPen2) and *Pencil* (Pencil2) strokes, with the checksums the app expects. On the phone a Pen stroke ignores pressure and is full width only for its first ~12 ms, then narrows to about half (measured from a screenshot, [FORMAT.md](FORMAT.md) §8). So each line is written as a chain of short Pen strokes, each sized to the width under it, and a taper is a run of shrinking pieces. Semi-transparent ink and fading ends are drawn in the colour they show on the page, so the joints don't darken, and lighter pieces go under darker ones.
 
 The `.sdocx` stroke format was reverse-engineered from real notes. [FORMAT.md](FORMAT.md) has the layout with byte offsets.
 
@@ -36,16 +39,18 @@ node tests/run_tests.js            # full check: samples, fixtures, round trip, 
 node tests/browser_smoke.js        # drives the page in headless Chrome (CHROME=/path/to/chrome)
 node tests/sdocx_parser.js *.sdocx # decodes any .sdocx and verifies its hash chain
 python3 tests/make_fixtures.py     # redraws tests/fixtures/*.png
+node tests/make_calibration.js     # writes tests/out/calibration.sdocx, a device test page (see Limits)
 ```
 
 `run_tests.js` checks that:
 
 - the parser decodes the three sample notes (`Notes_*.sdocx`, `Test_*.sdocx`), checksums included;
-- every fixture converts to a `.sdocx` whose structure matches the real notes, with no image layer;
+- every fixture converts to a `.sdocx` whose structure matches the real notes, with no image layer, and each Pen or Pencil stroke carries the fields of that pen's sample strokes;
 - every stroke round-trips (points, bounding box, colour, size, pressure);
-- the strokes, rendered back, match the source PNG (IoU above 0.85);
+- the strokes, rendered back with the phone's Pen width (FORMAT.md §8), match the source PNG (IoU above 0.85; 0.8 for 1 px lines and hatched shading, 0.6 for quarter-size inputs scored against the full-size drawing);
+- shading comes out as Pencil strokes whose composited tone is within 0.03 of the source, and line art uses no Pencil at all;
 - no stroke crosses bare paper;
-- each drawn line becomes one stroke.
+- each drawn line is traced as one line.
 
 Converted notes, renders and diff images are written to `tests/out/`.
 
@@ -55,10 +60,13 @@ GitHub Pages serves this repository straight from the `main` branch, so every pu
 
 ## Limits
 
-- It is for line art: filled areas and shading come out as centre lines, not fills.
+- Shading comes out as Pencil hatching in 10% tone steps. How Pencil2 renders on the device (its grain, and how it applies alpha) was not checked, so shading may look lighter or grainier than the preview.
+- Solid dark fills come out as thick centre lines, not fills.
+- Below about 2 px, a line's opacity can't be told from its width. Such lines are drawn as thin, opaque lines in the ink colour, so a thin translucent line comes out thinner and stronger than it was. On paper (no transparency) a thin coloured line can come out a little over-saturated. A fade on such a line becomes a taper.
 - A line gone over twice, with paper showing between the passes, can come out as several short strokes.
 - Tracing runs on the page's main thread, so a 2048 px image pauses it for about a second.
-- The pressure-to-width mapping for tapered lines was calibrated from sample notes. Report a mismatch if tapers look off.
+- Each line is a chain of short strokes, so the stroke eraser removes one piece at a time. Use the lasso to select or delete a whole line.
+- The Pen width rule comes from one phone screenshot at the converter's drawing speed. Whether the narrowing follows time or speed is still open, and Pencil2 was not measured. `node tests/make_calibration.js` writes `tests/out/calibration.sdocx`: open it in Samsung Notes, fit the page to the screen and send a screenshot to settle both.
 
 ## Credits and license
 

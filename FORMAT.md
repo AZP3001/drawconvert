@@ -346,19 +346,26 @@ the drawing. The samples' blank pages carry no cache. The converter omits it on 
 
 ## 8. Rendering facts used by the converter
 
-- **drawnRect.** drawnRect = union over InkPen2 strokes of `rect ± (penSize/2 + 4)`. Of the sample sides it decides, all are matched exactly (±1e-3): 4/4 on 225150, plus every side dominated by an unrotated InkPen2 stroke on the other two. BrushPen pads `penSize + 4`. `tests/run_tests.js` re-checks this on every run.
+- **drawnRect.** drawnRect = union over InkPen2 strokes of `rect ± (penSize/2 + 4)`. Of the sample sides it decides, all are matched exactly (±1e-3): 4/4 on 225150, plus every side dominated by an unrotated InkPen2 stroke on the other two. BrushPen pads `penSize + 4`. No Pencil2 stroke decides a side in the samples; the converter pads Pencil2 like BrushPen (`penSize + 4`, the larger guess). *Inferred, not verified.* `tests/run_tests.js` re-checks the InkPen2 rule on every run.
 - **Width calibration.** The pad shows the widest possible InkPen2 line is `penSize` (half-width `penSize/2`), independent of the pressures actually drawn.
-- **Pressure.** The converter treats InkPen2 width as `penSize × pressure` and holds pressure at 1.0 on even-width lines, so only tapered lines depend on the mapping. *Inferred, not verified.* The samples carry pressure but no rendered widths, so the mapping must be checked on the device.
+- **InkPen2 width on the device (measured).** Source: a phone screenshot of a converted note (101 InkPen2 strokes written at 0.5 units/ms, Δt = point spacing / 0.5 ms, tilt 0.506, orientation −1.571), aligned to the decoded strokes within 0.12 px, 4124 cross sections. Findings:
+  - **Pressure has no visible effect**: pressures 0.15 … 1.0 all draw the same width (0.516 … 0.523 × penSize late in a stroke).
+  - **The width falls with time since pen-down**: `penSize` for the first ~12 ms, then about linearly to 0.535 × `penSize` at ~240 ms, flat afterwards. Table (ms → width / penSize): 0 → 1, 12 → 1, 70 → 0.83, 125 → 0.713, 175 → 0.615, 240 → 0.535. Uniform-pressure and tapered strokes follow the same curve; local speed 0.3 … 0.8 units/ms changes nothing. Widths are normalised by the 0.965 the screenshot shows at pen-down (JPEG blur, larger on thin lines).
+  - **Not separable from this data**: whether the fall follows time, distance or a speed estimate (every stroke ran at ~0.5 units/ms). `tests/make_calibration.js` writes a note whose rows settle it (speeds 0.02 … 2 units/ms, a pen-down pause, pressure ramps) and also measures Pencil2 alpha, pressure and overlap.
+  - The converter therefore stays at 0.5 units/ms and carries width in `penSize`: lines are cut into pieces short enough to stay within 0.05 units of their width (§9).
+- **Pencil2 on the device.** Not measured: the screenshot had no Pencil2 strokes. The converter assumes `penSize` width and colour alpha as tone.
 
 ## 9. What the converter (`index.html`) writes
 
 - **ZIP.** Entries in sample order without `.spi` files: `pageIdInfo.dat`, the drawing page, a blank page (as Samsung writes it), `media/mediaInfo.dat` (0 entries), `note.note`, `end_tag.bin`, then the trailing end-tag copy (display times in ms). Entries are stored, not deflated.
 - **Pages.** mask `0x71` (drawnRect, bgImageMode 2, bgColor, bgWidth; no canvas cache), 720 × 1018 (1018 × 720 for landscape images), one layer, header bytes as in §3.1/§3.3.
-- **Strokes.** One `InkPen2` object per traced line:
+- **Strokes.** Each traced line is a chain of `InkPen2` pieces, and `Pencil2` objects carry shading and faint lines:
+  - a piece ends before the InkPen2 fade (§8) narrows it by more than 2 × 0.05 units, or where a taper changes the width by more than 12 %; pen size = the least-squares fit of the line's width under that fade, so thin lines get long pieces and thick ones short (~8 units at size 8). Along a fading line a piece spans at most 0.05 of opacity. Consecutive pieces share their joint point. Pencil strokes come first, then pen pieces from the most transparent to the most opaque (stable), so a light piece never covers a darker line;
   - base `0x1BF`/`0x6000`, rect = bbox of the decoded points;
-  - mask1 `0x425`, flexMask `0x258E` with advanced setting `"9;"`, colour ARGB from the source pixels, pen size = measured line width, size copy, 1, 0.33;
-  - pressure 1.0, or `width / penSize` on tapered lines;
+  - InkPen2: mask1 `0x425`, flexMask `0x258E` with advanced setting `"9;"`, colour from the source pixels, opaque (translucent ink, and a fading line at the opacity under each piece, is composited over the page background, since joints overlap), pen size as above, size copy, 1, 0.33;
+  - Pencil2: the same layout as the sample Pencil2 strokes with flexMask `0x258E`: advanced setting `"15;"`, colour = the ink behind the shading with alpha = its tone, pen size = hatch width, size copy, 1, 0.4713966 (f32 `e45af13e`). Hatch strokes are 45° segments as wide as their spacing (4 units on the page); a stroke breaks where the tone under it leaves its 0.1 band (with a fifth-step margin, band edges phased per hatch line). A faint line's fading end is stacked Pencil strokes, each adding 0.1 of tone;
+  - pressure 1.0 on every stroke (InkPen2 ignores it on the device; Pencil2's response is unmeasured);
   - tilt 0.506 and orientation −1.571 (typical sample values);
   - Δt from point spacing at 0.5 units/ms, points at most 2 units apart, tail 2.
-- **note.note.** The sample layout with the user's title, page size field, string table `(1,"9;") (0,"…InkPen2")`, InkPen2 current-pen block and SHA-256.
+- **note.note.** The sample layout with the user's title, page size field, string table `(1,"9;") (0,"…InkPen2")`, InkPen2 current-pen block and SHA-256. With Pencil2 strokes the table is `(3,"15;") (2,"…Pencil2") (1,"9;") (0,"…InkPen2")`: descending ids, setting id = name id + 1, as in 225305.
 - **Hashes.** All hashes and ids are recomputed as in §2.

@@ -51,6 +51,15 @@
   .preview img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; box-shadow: 0 8px 32px #0008; }
   .stroke-preview { padding: 12px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #171a20; }
   .stroke-preview canvas { display: block; max-width: 100%; height: auto; box-shadow: 0 8px 32px #0008; }
+  /* Before/after slider: your picture over the strokes, shown left of the divider. An invisible range input on top
+     takes the drag (anywhere on the preview), arrow keys included. */
+  .compare { position: relative; max-width: 100%; --split: 50%; }
+  #picture-canvas { position: absolute; inset: 0; width: 100%; height: 100%; max-width: none; box-shadow: none; clip-path: inset(0 calc(100% - var(--split)) 0 0); }
+  .compare::after { content: ""; position: absolute; top: 0; bottom: 0; left: var(--split); width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px #0007; pointer-events: none; z-index: 1; }
+  .compare::before { content: "\2194"; position: absolute; top: 50%; left: var(--split); transform: translate(-50%, -50%); width: 30px; height: 30px; border-radius: 50%; background: #fff; color: #111; display: grid; place-items: center; font-size: 16px; box-shadow: 0 1px 6px #0009; pointer-events: none; z-index: 2; }
+  .compare-tag { position: absolute; top: 8px; padding: 2px 7px; border-radius: 6px; background: #000b; color: #fff; font-size: 11px; pointer-events: none; z-index: 2; }
+  .compare input { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; opacity: 0; cursor: ew-resize; touch-action: pan-y; z-index: 3; -webkit-appearance: none; appearance: none; }
+  .compare input::-webkit-slider-thumb { -webkit-appearance: none; width: 1px; height: 1px; }
   .field { margin: 0 0 17px; }
   .field:last-child { margin-bottom: 0; }
   label { display: flex; justify-content: space-between; align-items: center; gap: 12px; font-size: 13px; font-weight: 620; margin-bottom: 7px; }
@@ -107,8 +116,16 @@
       <div class="preview-wrap" id="preview-wrap">
         <div class="preview-label"><span>Image preview</span><span id="dimensions"></span></div>
         <div class="preview" id="preview"><img id="preview-img" alt="Preview of the selected drawing"></div>
-        <div class="preview-label" style="margin-top:14px"><span>Stroke preview — what Samsung Notes will get</span><span id="stroke-count"></span></div>
-        <div class="stroke-preview"><canvas id="stroke-canvas" width="360" height="509" role="img" aria-label="Preview of the generated pen strokes"></canvas></div>
+        <div class="preview-label" style="margin-top:14px"><span>Stroke preview — drag across it to compare with your picture</span><span id="stroke-count"></span></div>
+        <div class="stroke-preview">
+          <div class="compare" id="compare">
+            <canvas id="stroke-canvas" width="360" height="509" role="img" aria-label="Preview of the generated pen strokes"></canvas>
+            <canvas id="picture-canvas" width="360" height="509" aria-hidden="true"></canvas>
+            <span class="compare-tag" style="left:8px">Your picture</span><span class="compare-tag" style="right:8px">Strokes</span>
+            <input id="split" type="range" min="0" max="100" step="0.1" value="50" aria-label="Comparison divider: your picture on the left, the strokes on the right">
+          </div>
+        </div>
+        <div class="preview-label" style="margin-top:10px"><span title="Pixel by pixel at your picture's resolution: the ink the strokes share with your picture, divided by all the ink in either, each pixel weighted by its darkness. 100% means identical.">Accuracy — strokes vs. your picture</span><span id="match"></span></div>
       </div>
     </section>
 
@@ -151,7 +168,7 @@
     </section>
   </div>
 
-  <div class="note"><strong>How it works:</strong> the drawing is traced in your browser. Inked pixels (alpha, or darkness on opaque images) are thinned to centre lines, split at crossings so each drawn line stays one stroke, simplified, and written as native Samsung Notes pen strokes (Pen tool) with the line's own colour and thickness. No image is embedded, so each stroke can be selected, moved and removed with the stroke eraser like strokes you drew yourself. Shading, gradients and texture are not reproduced: this is for line art.</div>
+  <div class="note"><strong>How it works:</strong> the drawing is traced in your browser. Inked pixels (alpha, or darkness on opaque images) are thinned to centre lines, split at crossings so each drawn line stays one stroke, simplified, and written as native Samsung Notes strokes with the line's own colour and thickness: lines with the Pen, fading ends included, and shading with the Pencil, its transparency matching the tone (gradients in 10% steps). Small images are traced on an enlarged copy, so thin lines keep their place and width. No image is embedded, so each stroke can be selected, moved and removed with the stroke eraser like strokes you drew yourself.</div>
   <div class="footer">Single-file tool · No account · No server</div>
 </main>
 
@@ -181,13 +198,23 @@
   "use strict";
 
   // ======================================================================
-  // Vectorizer: RGBA pixels -> centre-line strokes (image pixel coordinates)
+  // Vectorizer: RGBA pixels -> pen strokes (lines) and pencil strokes (shading), image pixel coordinates
   // ======================================================================
   const MIN_COVERAGE = 0.08;     // weakest pixel that can count as ink
-  const MIN_SPECK_AREA = 4;      // smaller ink islands are noise
-  const MAX_HOLE_AREA = 3;       // smaller gaps inside ink are filled
+  const MIN_SPECK_AREA = 4;      // smaller ink islands are noise (image px)
+  const MAX_HOLE_AREA = 3;       // smaller gaps inside ink are filled (image px)
   const MAX_PAIR_ANGLE = 50 * Math.PI / 180;  // max bend for a line to continue through a crossing
   const MAX_PAIR_COLOR = 64;     // max channel difference for a line to continue through a crossing
+  const CORNER_ANGLE = 30 * Math.PI / 180;    // a sharper turn between straight arms is a corner: kept, not smoothed
+  const TRACE_SIDE = 1600;       // smaller images are traced on a bicubic upscale (sub-pixel centres and widths)
+  const MAX_UPSCALE = 8;
+  const MAX_TRACE_PIXELS = 6e6;  // cap on the upscaled grid (time and memory)
+  const PEN_MIN_ALPHA = 0.5;     // fainter lines are drawn with the pencil
+  const FADE_RATIO = 0.7;        // the part of a line below this share of its opacity is a fade: stacked pencil strokes
+  const TONE_STEP = 0.1;         // pencil tone resolution: a hatch stroke spans at most this, a fade layer adds this
+  const SHADE_MIN = 0.06;        // lightest tone that is shaded
+  const SHADE_MAX = 0.6;         // darker ink is line work or solid fill (pen), never shading
+  const PENCIL_SIZE = 4;         // page units: pencil width and hatch spacing for shading
   const OFF_X = [-1, 0, 1, 1, 1, 0, -1, -1];  // 8-neighbours p0..p7, clockwise from top-left
   const OFF_Y = [-1, -1, -1, 0, 1, 1, 1, 0];
 
@@ -244,6 +271,143 @@
       let m = 0;
       for (let k = Math.max(0, y - r); k <= Math.min(H - 1, y + r); k++) m = Math.max(m, tmp[k * W + x]);
       out[y * W + x] = m;
+    }
+    return out;
+  }
+
+  // Catmull-Rom upscale by an integer factor into a grid with a 1-cell empty frame, clamped to [0, 1].
+  function upscale(src, w, h, k) {
+    const W = w * k + 2, out = new Float32Array(W * (h * k + 2));
+    const taps = (n) => {
+      const idx = new Int32Array(n * k * 4), wt = new Float32Array(n * k * 4);
+      for (let X = 0; X < n * k; X++) {
+        const s = (X + 0.5) / k - 0.5, i = Math.floor(s), t = s - i;
+        const ws = [((-0.5 * t + 1) * t - 0.5) * t, (1.5 * t - 2.5) * t * t + 1, ((-1.5 * t + 2) * t + 0.5) * t, (0.5 * t - 0.5) * t * t];
+        for (let j = 0; j < 4; j++) { idx[4 * X + j] = clamp(i - 1 + j, 0, n - 1); wt[4 * X + j] = ws[j]; }
+      }
+      return [idx, wt];
+    };
+    const [ix, wx] = taps(w), [iy, wy] = taps(h), wk = w * k;
+    const rows = new Float32Array(h * wk);
+    for (let y = 0; y < h; y++) for (let X = 0; X < wk; X++) {
+      let v = 0;
+      for (let j = 0; j < 4; j++) v += wx[4 * X + j] * src[y * w + ix[4 * X + j]];
+      rows[y * wk + X] = v;
+    }
+    for (let Y = 0; Y < h * k; Y++) for (let X = 0; X < wk; X++) {
+      let v = 0;
+      for (let j = 0; j < 4; j++) v += wy[4 * Y + j] * rows[iy[4 * Y + j] * wk + X];
+      out[(Y + 1) * W + X + 1] = clamp(v, 0, 1);
+    }
+    return out;
+  }
+
+  // Bilinear enlargement on upscale()'s grid. It never rings, so a cross section sums to the source's ink and
+  // peaks at its darkest pixel (bicubic overshoot reads dark grey 0.91 as 0.94; clamped undershoot adds 3-5 %).
+  function upscaleLinear(src, w, h, k) {
+    const W = w * k + 2, out = new Float32Array(W * (h * k + 2));
+    const taps = (n) => Array.from({ length: n * k }, (_, X) => {
+      const s = clamp((X + 0.5) / k - 0.5, 0, n - 1), i = Math.floor(s);
+      return [i, Math.min(n - 1, i + 1), s - i];
+    });
+    const tx = taps(w), ty = taps(h);
+    for (let Y = 0; Y < h * k; Y++) {
+      const [ya, yb, fy] = ty[Y];
+      for (let X = 0; X < w * k; X++) {
+        const [xa, xb, fx] = tx[X];
+        const top = src[ya * w + xa] + (src[ya * w + xb] - src[ya * w + xa]) * fx;
+        const bottom = src[yb * w + xa] + (src[yb * w + xb] - src[yb * w + xa]) * fx;
+        out[(Y + 1) * W + X + 1] = top + (bottom - top) * fy;
+      }
+    }
+    return out;
+  }
+
+  // Gaussian-like blur: three box passes with running sums (edges extended), O(1) per pixel for any sigma.
+  function blur(src, W, H, sigma) {
+    const r = Math.max(1, Math.round((Math.sqrt(4 * sigma * sigma + 1) - 1) / 2)), norm = 1 / (2 * r + 1);
+    const a = Float32Array.from(src), b = new Float32Array(src.length);
+    for (let pass = 0; pass < 3; pass++) {
+      for (let y = 0; y < H; y++) {
+        const o = y * W;
+        let s = a[o] * (r + 1);
+        for (let j = 1; j <= r; j++) s += a[o + Math.min(W - 1, j)];
+        for (let x = 0; x < W; x++) { b[o + x] = s * norm; s += a[o + Math.min(W - 1, x + r + 1)] - a[o + Math.max(0, x - r)]; }
+      }
+      for (let x = 0; x < W; x++) {
+        let s = b[x] * (r + 1);
+        for (let j = 1; j <= r; j++) s += b[Math.min(H - 1, j) * W + x];
+        for (let y = 0; y < H; y++) { a[y * W + x] = s * norm; s += b[Math.min(H - 1, y + r + 1) * W + x] - b[Math.max(0, y - r) * W + x]; }
+      }
+    }
+    return a;
+  }
+
+  // Shading = translucent ink (softened, lighter than SHADE_MAX) in areas at least 2 x radius wide: the
+  // morphological opening of that ink by a disc. Lines, translucent ones included, are narrower, and a few
+  // separate lines leave mostly paper between them, where shading (even grainy) carries tone. null if none.
+  function shadingMask(cov, W, H, k, radius) {
+    const N = W * H, soft = blur(cov, W, H, 1.5 * k), light = new Uint8Array(N), bare = new Float32Array(N);
+    for (let i = 0; i < N; i++) { light[i] = soft[i] >= SHADE_MIN && cov[i] < SHADE_MAX ? 1 : 0; bare[i] = cov[i] < SHADE_MIN ? 1 : 0; }
+    const paper = blur(bare, W, H, radius);
+    for (let i = 0; i < N; i++) if (paper[i] > 0.5) light[i] = 0;
+    dropSmallComponents(light, W, H, 0, 6 * k * k);   // dark pencil grains belong to the shading
+    const inside = distanceTransform(light, W, H), off = new Uint8Array(N);
+    let any = false;
+    for (let i = 0; i < N; i++) if (inside[i] < radius) off[i] = 1; else any = true;
+    if (!any) return null;
+    const toCentre = distanceTransform(off, W, H);
+    const shade = new Uint8Array(N);
+    for (let i = 0; i < N; i++) shade[i] = light[i] && toCentre[i] <= radius ? 1 : 0;
+    return shade;
+  }
+
+  // Pencil shading as hatching over `region` (2 = shading, 1 = line work or untoned shading it passes under): 45-degree strokes
+  // `spacing` apart and as wide, tiling the area. A stroke's alpha is the mean tone under it, and it breaks where
+  // that tone leaves its TONE_STEP band by a fifth of a step; each line's band edges are shifted by a golden-ratio
+  // phase, so neighbouring lines break in different places and the seams don't line up into visible contours. At a break both round caps reach pi/8 x spacing past the seam, which adds
+  // back exactly the area a cap leaves out, so seams neither darken nor show paper; at an edge the cap stays
+  // inside. Returns grid-coordinate strokes with alpha and colour (colorOf: flat sample list -> RGB or null).
+  function hatchStrokes(region, tone, W, H, spacing, colorOf) {
+    const out = [];
+    let x0 = W, y0 = H, x1 = -1, y1 = -1;
+    for (let i = 0; i < region.length; i++) {
+      if (region[i] !== 2) continue;
+      const x = i % W, y = (i / W) | 0;
+      x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y);
+    }
+    if (x1 < 0) return out;
+    const step = Math.max(0.5, spacing / 8), cap = spacing / 2, seam = Math.PI / 8 * spacing;
+    const dx = Math.SQRT1_2, dy = -Math.SQRT1_2, nx = -dy, ny = dx;
+    const corners = [[x0, y0], [x1, y0], [x0, y1], [x1, y1]];
+    const os = corners.map(([x, y]) => x * nx + y * ny), ts = corners.map(([x, y]) => x * dx + y * dy);
+    const tLo = Math.min(...ts) - spacing, tHi = Math.max(...ts) + spacing;
+    for (let o = Math.min(...os) + spacing / 2, line = 0; o <= Math.max(...os); o += spacing, line++) {
+      const at = (t) => [o * nx + t * dx, o * ny + t * dy];
+      // Tone bands of TONE_STEP, shifted per line by a golden-ratio phase: neighbouring lines step at different
+      // places, so a gradient dithers instead of banding into contour rings. A run leaves its band only past a
+      // margin, so noise on a band edge does not chop it up.
+      const phase = (line * 0.6180339887) % 1, band = (v) => Math.floor(v / TONE_STEP + phase);
+      const leaves = (b, v) => v < (b - phase - 0.2) * TONE_STEP || v >= (b + 1.2 - phase) * TONE_STEP;
+      let run = null;
+      const close = (tEnd, split) => {
+        if (run.n) {
+          let a = run.t0 + (run.split ? seam : cap), b = tEnd - (split ? seam : cap), width = spacing;
+          if (b < a) { a = b = (run.t0 + tEnd) / 2; width = clamp(tEnd - run.t0, spacing / 2, spacing); }
+          out.push({ points: a === b ? [at(a)] : [at(a), at(b)], width, alpha: run.sum / run.n, color: colorOf(run.pts) || [0, 0, 0] });
+        }
+        run = null;
+      };
+      for (let t = tLo; t <= tHi; t += step) {
+        const [fx, fy] = at(t), x = Math.round(fx), y = Math.round(fy);
+        const i = x >= 0 && y >= 0 && x < W && y < H ? y * W + x : -1, r = i >= 0 ? region[i] : 0, v = r === 2 ? tone[i] : 0;
+        if (!r || (r === 2 && v < (run ? SHADE_MIN / 2 : SHADE_MIN))) { if (run) close(t, false); continue; }
+        const split = r === 2 && run && run.n && t - run.t0 >= spacing && leaves(run.band, v);
+        if (split) close(t, true);
+        if (!run) run = { t0: t, split, band: -1, sum: 0, n: 0, pts: [] };
+        if (r === 2) { if (!run.n) run.band = band(v); run.sum += v; run.n++; run.pts.push(fx, fy); }
+      }
+      if (run) close(tHi, false);
     }
     return out;
   }
@@ -306,7 +470,10 @@
       for (const i of order) {
         let mask = 0, count = 0;
         for (let k = 0; k < 8; k++) if (skel[i + off[k]]) { mask |= 1 << k; count++; }
-        if (count > 1 && SIMPLE[mask]) { skel[i] = 0; changed = true; } else keep.push(i);
+        // A line end has one neighbour, or two touching ones on the distance ridge (the tip of an even-width line's
+        // 2 px ridge): without the second case such an end facing the scan order erodes row by row and vanishes.
+        const end = count === 1 || (count === 2 && (mask & ((mask << 1) | (mask >> 7)) & 255) !== 0 && off.every((o) => dist[i + o] <= dist[i] + 1e-6));
+        if (!end && count > 1 && SIMPLE[mask]) { skel[i] = 0; changed = true; } else keep.push(i);
       }
       order = keep;
     }
@@ -314,7 +481,7 @@
   }
 
   // Skeleton -> graph of nodes (line ends, crossings) and edges (pixel chains between them).
-  function buildGraph(skel, dist, W) {
+  function buildGraph(skel, dist, W, unit) {
     const off = OFF_X.map((dx, k) => dx + OFF_Y[k] * W);
     const deg = new Uint8Array(skel.length);
     const pixels = [];
@@ -325,7 +492,7 @@
       deg[i] = c; pixels.push(i);
     }
     const nodeOf = new Int32Array(skel.length).fill(-1);
-    const g = { nodes: [], edges: [], loops: [], dots: [] };
+    const g = { nodes: [], edges: [], loops: [], dots: [], unit };
     for (const i of pixels) {
       if (nodeOf[i] >= 0) continue;
       if (deg[i] >= 3) {
@@ -424,7 +591,7 @@
   }
   const direction = (from, to) => { const dx = to[0] - from[0], dy = to[1] - from[1], len = Math.hypot(dx, dy) || 1; return [dx / len, dy / len]; };
   const bendAngle = (u, v) => Math.acos(clamp(-(u[0] * v[0] + u[1] * v[1]), -1, 1));  // 0 = straight on
-  const branchReach = (node) => Math.max(3, 1.5 * node.r + 3);
+  const branchReach = (node, unit) => Math.max(3 * unit, 1.5 * node.r + 3 * unit);
 
   // Thinning splits an oblique X into two 3-way nodes joined by a short edge. They are one crossing
   // when neither node continues straight on its own (unlike a ladder rung or two T-joints) but
@@ -434,18 +601,19 @@
     if (E.a === E.b || A.ends.length !== 3 || B.ends.length !== 3) return false;
     const outerA = A.ends.filter((k) => k >> 1 !== e), outerB = B.ends.filter((k) => k >> 1 !== e);
     if (outerA.length !== 2 || outerB.length !== 2) return false;
-    const own = (node, keys) => keys.map((k) => direction([node.x, node.y], branchPoint(g, k, branchReach(node))));
+    const own = (node, keys) => keys.map((k) => direction([node.x, node.y], branchPoint(g, k, branchReach(node, g.unit))));
     const [a0, a1] = own(A, outerA), [b0, b1] = own(B, outerB);
     if (bendAngle(a0, a1) <= MAX_PAIR_ANGLE || bendAngle(b0, b1) <= MAX_PAIR_ANGLE) return false;
     const mid = [(A.x + B.x) / 2, (A.y + B.y) / 2];
-    const [p0, p1] = outerA.map((k) => direction(mid, branchPoint(g, k, branchReach(A))));
-    const [q0, q1] = outerB.map((k) => direction(mid, branchPoint(g, k, branchReach(B))));
+    const [p0, p1] = outerA.map((k) => direction(mid, branchPoint(g, k, branchReach(A, g.unit))));
+    const [q0, q1] = outerB.map((k) => direction(mid, branchPoint(g, k, branchReach(B, g.unit))));
     const ok = (u, v) => bendAngle(u, v) <= MAX_PAIR_ANGLE;
     return (ok(p0, q0) && ok(p1, q1)) || (ok(p0, q1) && ok(p1, q0));
   }
 
   // Removes thinning artefacts: short spurs, split crossings, tiny loops, pass-through nodes.
   function simplifyGraph(g) {
+    const u = g.unit;
     for (let round = 0; round < 8; round++) {
       let changed = false;
       for (let e = 0; e < g.edges.length; e++) {
@@ -455,15 +623,15 @@
         const tip = A.ends.length === 1 && B.ends.length >= 3 ? A : B.ends.length === 1 && A.ends.length >= 3 ? B : null;
         if (!tip) continue;
         const hub = tip === A ? B : A;
-        if (pathLength(edgePath(g, e)) < 1.2 * hub.r + 2) { killEdge(g, e); tip.alive = false; changed = true; }
+        if (pathLength(edgePath(g, e)) < 1.2 * hub.r + 2 * u) { killEdge(g, e); tip.alive = false; changed = true; }
       }
       for (let e = 0; e < g.edges.length; e++) {
         const E = g.edges[e];
         if (!E.alive) continue;
         const A = g.nodes[E.a], B = g.nodes[E.b], len = pathLength(edgePath(g, e));
         if (E.a === E.b) {
-          if (A.ends.length > 2 && len < 4 * A.r + 6) { killEdge(g, e); changed = true; }
-        } else if (A.ends.length >= 3 && B.ends.length >= 3 && (len < 0.8 * (A.r + B.r) + 1.5 || (len < 3 * (A.r + B.r) + 2 && isSplitCrossing(g, e)))) {
+          if (A.ends.length > 2 && len < 4 * A.r + 6 * u) { killEdge(g, e); changed = true; }
+        } else if (A.ends.length >= 3 && B.ends.length >= 3 && (len < 0.8 * (A.r + B.r) + 1.5 * u || (len < 3 * (A.r + B.r) + 2 * u && isSplitCrossing(g, e)))) {
           const [mx, my] = branchPoint(g, e * 2, len / 2);   // halfway along the joining line: stays on ink when it curves
           killEdge(g, e);
           // r stays the true junction radius (it scales every threshold); span only marks the merged area.
@@ -500,19 +668,26 @@
     return (map[i] * (1 - tx) + map[i + 1] * tx) * (1 - ty) + (map[i + W] * (1 - tx) + map[i + W + 1] * tx) * ty;
   }
 
-  // Coverage profile across the line: ink mass (width x core), centroid offset, peak.
-  function crossProfile(cov, W, H, x, y, nx, ny, reach) {
-    let mass = 0, moment = 0, peak = 0;
+  // Coverage profile across the line: ink mass (width x opacity), centroid offset, peak. Each side stops at
+  // the paper or at the valley before a neighbouring line, so lines that nearly touch do not widen each other.
+  function crossProfile(cov, W, H, x, y, nx, ny, reach, unit, sharp = cov) {
+    const step = Math.max(0.5, unit / 4);
+    let mass = 0, moment = 0, peak = 0, crest = 0;
     for (const sign of [1, -1]) {
-      for (let t = sign > 0 ? 0 : 0.5; t <= reach; t += 0.5) {
+      let low = Infinity, top = 0;
+      for (let t = sign > 0 ? 0 : step; t <= reach; t += step) {
         const px = x + sign * t * nx, py = y + sign * t * ny;
         if (px < 0 || py < 0 || px >= W - 1 || py >= H - 1) break;
         const c = bilinear(cov, W, px, py);
-        if (c < 0.03 && t >= 1) break;
-        mass += c * 0.5; moment += sign * t * c * 0.5; peak = Math.max(peak, c);
+        if ((c < 0.03 && t >= unit) || (low < 0.5 * top && c > low + 0.1)) break;   // a dip below half the peak splits lines in the ink mask too
+        low = Math.min(low, c); top = Math.max(top, c);
+        mass += c * step; moment += sign * t * c * step; peak = Math.max(peak, c);
+        if (sharp !== cov) crest = Math.max(crest, bilinear(sharp, W, px, py));
       }
     }
-    return { mass, offset: mass > 0 ? moment / mass : 0, peak };
+    // Under two source pixels wide a line may cover no pixel fully, and then it reads up to 2 px wide whatever its
+    // true width: past 2.5 px the darkest pixel is the opacity; below, the sharper copy's crest reads it better.
+    return { mass, offset: mass > 0 ? moment / mass : 0, peak: sharp === cov || mass >= 2.5 * unit * peak ? peak : crest };
   }
 
   function gaussianSmooth(pts, closed, sigma) {
@@ -522,14 +697,90 @@
     for (let j = 0; j <= R; j++) weights.push(Math.exp(-(j * j) / (2 * sigma * sigma)));
     const out = new Array(pts.length);
     for (let i = 0; i < n; i++) {
-      const rr = closed ? Math.min(R, Math.floor((n - 1) / 2)) : Math.min(R, i, n - 1 - i);
+      if (!closed) {
+        // Open line: a weighted straight-line fit over the window, one-sided at the ends, so an end is averaged
+        // like the middle instead of left raw (in the middle it equals the plain weighted mean).
+        let sw = 0, sd = 0, sdd = 0, sx = 0, sy = 0, sdx = 0, sdy = 0;
+        for (let j = Math.max(0, i - R); j <= Math.min(n - 1, i + R); j++) {
+          const d = j - i, w = weights[Math.abs(d)], x = pts[2 * j], y = pts[2 * j + 1];
+          sw += w; sd += w * d; sdd += w * d * d; sx += w * x; sy += w * y; sdx += w * d * x; sdy += w * d * y;
+        }
+        const det = sw * sdd - sd * sd;
+        out[2 * i] = det > 1e-9 ? (sx * sdd - sdx * sd) / det : sx / sw;
+        out[2 * i + 1] = det > 1e-9 ? (sy * sdd - sdy * sd) / det : sy / sw;
+        continue;
+      }
+      const rr = Math.min(R, Math.floor((n - 1) / 2));
       let sx = 0, sy = 0, sw = 0;
       for (let j = -rr; j <= rr; j++) {
-        const k = closed ? (i + j + n) % n : i + j, w = weights[Math.abs(j)];
+        const k = (i + j + n) % n, w = weights[Math.abs(j)];
         sx += pts[2 * k] * w; sy += pts[2 * k + 1] * w; sw += w;
       }
       out[2 * i] = sx / sw; out[2 * i + 1] = sy / sw;
     }
+    return out;
+  }
+
+  // A centre line smoothed without rounding its corners: where it turns by CORNER_ANGLE or more between straight
+  // arms (over twice the arm it turns little further, unlike a tight curve), each run between corners is smoothed
+  // on its own and the corner goes where the runs' end tangents meet. `arm` counts points, `tol` is in grid units;
+  // a closed line repeats its first point last.
+  function smoothLine(pts, closed, sigma, arm, tol) {
+    const n = pts.length / 2, m = closed ? n - 1 : n;
+    const plain = () => {
+      if (!closed || n <= 3) return gaussianSmooth(pts, false, sigma);
+      const ring = gaussianSmooth(pts.slice(0, -2), true, sigma);
+      return ring.concat(ring.slice(0, 2));
+    };
+    if (m < 4 * arm + 2) return plain();
+    const at = (i) => 2 * (closed ? ((i % m) + m) % m : i);
+    const pt = (i) => [pts[at(i)], pts[at(i) + 1]];
+    const turn = (i, a) => {
+      const u = direction(pt(i - a), pt(i)), v = direction(pt(i), pt(i + a));
+      return Math.acos(clamp(u[0] * v[0] + u[1] * v[1], -1, 1));
+    };
+    const lo = closed ? 0 : 2 * arm, hi = closed ? m - 1 : m - 1 - 2 * arm, th = new Float64Array(m);
+    for (let i = lo; i <= hi; i++) th[i] = turn(i, arm);
+    const corners = [];
+    for (let i = lo; i <= hi; i++) {
+      if (th[i] < CORNER_ANGLE) continue;
+      let peak = true;
+      for (let d = -arm; d <= arm && peak; d++) {
+        const j = closed ? (((i + d) % m) + m) % m : i + d;
+        if (d && j >= lo && j <= hi && (th[j] > th[i] || (th[j] === th[i] && d < 0))) peak = false;
+      }
+      if (peak && turn(i, 2 * arm) < 1.5 * th[i]) corners.push(i);
+    }
+    if (!corners.length) return plain();
+    const out = pts.slice(), runs = [];
+    const cuts = closed ? corners.concat(corners[0] + m) : [0, ...corners, m - 1];
+    for (let c = 0; c + 1 < cuts.length; c++) {
+      const piece = [];
+      for (let i = cuts[c]; i <= cuts[c + 1]; i++) piece.push(...pt(i));
+      const sm = gaussianSmooth(piece, false, sigma), L = sm.length / 2, q = (i) => [sm[2 * i], sm[2 * i + 1]];
+      for (let i = cuts[c]; i <= cuts[c + 1]; i++) { out[at(i)] = sm[2 * (i - cuts[c])]; out[at(i) + 1] = sm[2 * (i - cuts[c]) + 1]; }
+      // End tangents from the arm just past the corner zone (cross sections there no longer catch the other arm)
+      // and, as a fallback, from the run's very end.
+      const ends = (g) => { const r = Math.min(arm, L - 1 - g); return { head: q(g), headDir: direction(q(g + r), q(g)), tail: q(L - 1 - g), tailDir: direction(q(L - 1 - g - r), q(L - 1 - g)) }; };
+      runs.push([2 * arm < L ? ends(arm) : null, ends(0)]);
+    }
+    const meet = (a, b) => {   // where a's tail tangent crosses b's head tangent, or null if they barely turn
+      const [px, py] = a.tail, [d1x, d1y] = a.tailDir, [qx, qy] = b.head, [d2x, d2y] = b.headDir, cross = d1x * d2y - d1y * d2x;
+      if (Math.abs(cross) < Math.sin(CORNER_ANGLE / 2)) return null;
+      const s = ((qx - px) * d2y - (qy - py) * d2x) / cross;
+      return [px + s * d1x, py + s * d1y];
+    };
+    corners.forEach((ci, j) => {
+      const into = closed ? runs[(j + runs.length - 1) % runs.length] : runs[j], from = closed ? runs[j] : runs[j + 1];
+      const near = (p, lim) => p && Math.hypot(p[0] - pts[at(ci)], p[1] - pts[at(ci) + 1]) <= lim;
+      // A drawn corner's centre line runs into its tip: far tangents meeting more than `tol` off the line mean a
+      // rounded bend, which only the run-end tangents follow.
+      let p = into[0] && from[0] ? meet(into[0], from[0]) : null;
+      if (!near(p, tol)) p = meet(into[1], from[1]);
+      if (!near(p, arm)) p = [(into[1].tail[0] + from[1].head[0]) / 2, (into[1].tail[1] + from[1].head[1]) / 2];
+      out[at(ci)] = p[0]; out[at(ci) + 1] = p[1];
+    });
+    if (closed) { out[2 * n - 2] = out[0]; out[2 * n - 1] = out[1]; }
     return out;
   }
 
@@ -562,36 +813,76 @@
   function vectorize(rgba, width, height, options = {}) {
     if (!(width > 0 && height > 0) || rgba.length < width * height * 4) throw new Error("Invalid image data.");
     const detail = clamp(Number(options.detail ?? 60), 0, 100) / 100;
-    const smoothSigma = 2.0 - 1.6 * detail;     // px along the line: this is what smooths
-    const epsilon = 0.4 - 0.3 * detail;         // px, RDP tolerance: only drops redundant points, larger values facet curves
-    const W = width + 2, H = height + 2, N = W * H;  // 1-px empty frame: lines may touch the image edge
+    // Trace grid: k x k cells per image pixel. Small images are upscaled (bicubic) so thin and low-res lines get
+    // sub-pixel centres, widths and junctions. Every length below is in grid cells.
+    const k = clamp(Math.min(Math.floor(TRACE_SIDE / Math.max(width, height)), Math.floor(Math.sqrt(MAX_TRACE_PIXELS / (width * height)))), 1, MAX_UPSCALE);
+    const smoothSigma = (2.0 - 1.6 * detail) * k;   // along the line: this is what smooths
+    const epsilon = 0.1 - 0.05 * detail;             // RDP tolerance in cells (a fixed size on the page): larger values facet curves
+    const W = width * k + 2, H = height * k + 2, N = W * H;  // 1-cell empty frame: lines may touch the image edge
     let transparent = false;
     for (let i = 3; i < width * height * 4; i += 4) if (rgba[i] < 250) { transparent = true; break; }
     const bg = transparent ? null : borderColor(rgba, width, height);
-    const cov = new Float32Array(N);
-    for (let y = 0; y < height; y++) {
-      for (let x = 0; x < width; x++) {
-        const s = (y * width + x) * 4;
-        cov[(y + 1) * W + x + 1] = transparent ? rgba[s + 3] / 255
-          : Math.max(Math.abs(rgba[s] - bg[0]), Math.abs(rgba[s + 1] - bg[1]), Math.abs(rgba[s + 2] - bg[2])) / 255;
+    const cov0 = new Float32Array(width * height);
+    for (let i = 0; i < width * height; i++) {
+      const s = i * 4;
+      cov0[i] = transparent ? rgba[s + 3] / 255
+        : Math.max(Math.abs(rgba[s] - bg[0]), Math.abs(rgba[s + 1] - bg[1]), Math.abs(rgba[s + 2] - bg[2])) / 255;
+    }
+    // Masks and centre lines come from the smooth bicubic copy; widths and opacity are measured on the linear one.
+    const src = upscale(cov0, width, height, k), lin = k > 1 ? upscaleLinear(cov0, width, height, k) : src;
+    // Shading is hatched with the pencil (below), not traced as lines. Its tone is the mean shading coverage
+    // away from dark lines; lines are traced from their own coverage: the source with that tone un-composited.
+    const shade = shadingMask(src, W, H, k, Math.max(4, Math.max(width, height) / 300) * k);
+    const pageScale = pageGeometry(width, height, 2).scale, spacing = PENCIL_SIZE / pageScale * k;
+    let cov = src, covMass = lin, tone = null;
+    if (shade) {
+      const dark = new Uint8Array(N), valid = new Float32Array(N), toned = new Float32Array(N);
+      for (let i = 0; i < N; i++) dark[i] = src[i] >= SHADE_MAX ? 1 : 0;
+      const near = maxFilter(dark, W, H, Math.ceil(1.5 * k));
+      for (let i = 0; i < N; i++) if (shade[i] && !near[i]) { valid[i] = 1; toned[i] = src[i]; }
+      const support = blur(valid, W, H, spacing / 2), sum = blur(toned, W, H, spacing / 2);
+      tone = new Float32Array(N); cov = new Float32Array(N); covMass = new Float32Array(N);
+      for (let i = 0; i < N; i++) {
+        if (support[i] >= 0.2) tone[i] = Math.min(SHADE_MAX, sum[i] / support[i]);
+        cov[i] = clamp((src[i] - tone[i]) / (1 - tone[i]), 0, 1);
+        covMass[i] = clamp((lin[i] - tone[i]) / (1 - tone[i]), 0, 1);
       }
     }
-    const peak = maxFilter(cov, W, H, 2);
+    const peak = maxFilter(cov, W, H, 2 * k);
     const ink = new Uint8Array(N);
-    for (let i = 0; i < N; i++) ink[i] = cov[i] >= MIN_COVERAGE && cov[i] >= 0.5 * peak[i] ? 1 : 0;
-    dropSmallComponents(ink, W, H, 1, MIN_SPECK_AREA);
-    dropSmallComponents(ink, W, H, 0, MAX_HOLE_AREA + 1);
+    for (let i = 0; i < N; i++) ink[i] = !(shade && shade[i]) && cov[i] >= MIN_COVERAGE && cov[i] >= 0.5 * peak[i] ? 1 : 0;
+    dropSmallComponents(ink, W, H, 1, MIN_SPECK_AREA * k * k);
+    dropSmallComponents(ink, W, H, 0, (MAX_HOLE_AREA + 1) * k * k);
     const dist = distanceTransform(ink, W, H);
     const skel = thin(ink, dist, W);
-    const g = buildGraph(skel, dist, W);
+    const g = buildGraph(skel, dist, W, k);
     simplifyGraph(g);
 
-    const pixelColor = (x, y) => { const i = ((Math.round(y) - 1) * width + Math.round(x) - 1) * 4; return [rgba[i], rgba[i + 1], rgba[i + 2]]; };
+    const source = (x, y) => clamp(Math.floor((y - 0.5) / k), 0, height - 1) * width + clamp(Math.floor((x - 0.5) / k), 0, width - 1);
+    const pixelColor = (x, y) => { const i = source(x, y) * 4; return [rgba[i], rgba[i + 1], rgba[i + 2]]; };
+    // Colour of the ink behind translucent pixels (flat [x, y, ...] list): on paper, the colour that at their coverage
+    // gives the pixels. Weighted by coverage, so faint pixels count little and paper not at all; null on bare paper.
+    const inkColor = (pts) => {
+      let a = 0;
+      const d = [0, 0, 0];
+      for (let j = 0; j < pts.length; j += 2) {
+        const p = source(pts[j], pts[j + 1]), i = p * 4, w = transparent ? rgba[i + 3] / 255 : cov0[p];
+        for (let c = 0; c < 3; c++) d[c] += transparent ? rgba[i + c] * w : rgba[i + c] - bg[c];
+        a += w;
+      }
+      return a > 0 ? d.map((v, c) => clamp(Math.round((transparent ? 0 : bg[c]) + v / a), 0, 255)) : null;
+    };
     const isCore = (x, y) => { const i = Math.round(y) * W + Math.round(x); return cov[i] >= 0.6 * peak[i]; };
+    const median3 = (ch) => ch.map((c) => quantile(c, 0.5));
+    const argb = (alpha, [r, gg, b]) => (((alpha << 24) | (r << 16) | (gg << 8) | b) >>> 0);
+    // Pen ink keeps the image's alpha on transparent images (opaque on paper); pencil alpha is the tone.
+    const penAlpha = (o) => (transparent ? (o >= 0.9 ? 255 : Math.max(1, Math.round(o * 255))) : 255);
+    const pencilAlpha = (o) => clamp(Math.round(o * 255), 1, 255);
+    const toImage = ([x, y]) => [(x - 0.5) / k, (y - 0.5) / k];
     const edgeColor = (pts) => {
       const ch = [[], [], []];
       for (let i = 0; i < pts.length; i += 2) if (isCore(pts[i], pts[i + 1])) pixelColor(pts[i], pts[i + 1]).forEach((v, c) => ch[c].push(v));
-      return ch[0].length ? ch.map((c) => quantile(c, 0.5)) : null;
+      return ch[0].length ? median3(ch) : null;
     };
 
     // Pair the straightest same-coloured branches at each crossing so a drawn line stays one stroke.
@@ -599,7 +890,7 @@
     const colors = g.edges.map((E) => (E.alive ? edgeColor(E.pts) : null));
     for (const J of g.nodes) {
       if (!J.alive || J.ends.length < 3) continue;
-      const dirs = J.ends.map((key) => direction([J.x, J.y], branchPoint(g, key, branchReach(J))));
+      const dirs = J.ends.map((key) => direction([J.x, J.y], branchPoint(g, key, branchReach(J, k))));
       const pairs = [];
       for (let i = 0; i < J.ends.length; i++) for (let j = i + 1; j < J.ends.length; j++) {
         const bend = bendAngle(dirs[i], dirs[j]);
@@ -644,23 +935,32 @@
     for (const pts of g.loops) chains.push({ pts: pts.concat(pts.slice(0, 2)), marks: [], closed: true, freeStart: false, freeEnd: false });
 
     const strokes = [];
+    // Shading: pencil hatching whose tone follows the shading around the lines (lines are drawn on top).
+    if (shade) {
+      const region = new Uint8Array(N);
+      for (let i = 0; i < N; i++) region[i] = shade[i] && tone[i] > 0 ? 2 : shade[i] || ink[i] ? 1 : 0;
+      for (const h of hatchStrokes(region, tone, W, H, spacing, inkColor)) {
+        strokes.push({ points: h.points.map(toImage), widths: h.points.map(() => h.width / k), color: argb(pencilAlpha(h.alpha), h.color), closed: false, pen: "pencil" });
+      }
+    }
+
     // A free skeleton end stops short of the drawn tip (about half the width, more on tapered ends).
-    // Move it so the pen's round cap ends where coverage falls below half the line's core coverage.
-    const fitTip = (pts, ws, level) => {
+    // Move it so the pen's round cap ends where coverage falls below `level`. `extra` arrays shrink with pts.
+    const fitTip = (pts, ws, level, extra) => {
       const m = pts.length / 2;
       if (m < 2) return;
       const ex = pts[2 * m - 2], ey = pts[2 * m - 1], r = ws[m - 1] / 2;
-      let k = m - 2;
-      for (let L = 0; k > 0; k--) {
-        L += Math.hypot(pts[2 * k + 2] - pts[2 * k], pts[2 * k + 3] - pts[2 * k + 1]);
-        if (L >= Math.max(2, 2 * r)) break;
+      let j = m - 2;
+      for (let L = 0; j > 0; j--) {
+        L += Math.hypot(pts[2 * j + 2] - pts[2 * j], pts[2 * j + 3] - pts[2 * j + 1]);
+        if (L >= Math.max(2 * k, 2 * r)) break;
       }
-      const [ux, uy] = direction([pts[2 * k], pts[2 * k + 1]], [ex, ey]);
+      const [ux, uy] = direction([pts[2 * j], pts[2 * j + 1]], [ex, ey]);
       if (!ux && !uy) return;
       let tip = r, prev = bilinear(cov, W, ex, ey);
       if (prev < level) tip = 0;
       else {
-        for (let t = 0.25; t <= 2 * r + 3; t += 0.25) {
+        for (let t = 0.25; t <= 2 * r + 3 * k; t += 0.25) {
           const x = ex + ux * t, y = ey + uy * t;
           if (x < 0 || y < 0 || x >= W - 1 || y >= H - 1) { tip = t; break; }
           const c = bilinear(cov, W, x, y);
@@ -669,34 +969,76 @@
         }
       }
       const shift = tip - r;
-      if (shift >= 0) { pts[2 * m - 2] = ex + ux * shift; pts[2 * m - 1] = ey + uy * shift; return; }
-      let budget = Math.min(-shift, pathLength(pts) / 2);
+      const narrows = () =>   // pointed tip: where a round cap would sit, the ink is already narrower than the line
+        crossProfile(covMass, W, H, ex + ux * shift, ey + uy * shift, -uy, ux, r + 2 * k, k).mass / Math.max(0.05, 2 * level) < 0.8 * ws[m - 1];
+      if (shift > 0.25 * r && shift > k && narrows()) {
+        // Ink well past the round cap: a pointed tip. Run on to it, each point as wide as the ink across it and at
+        // most twice its distance to the tip, so the line narrows to a point instead of ending in a blob.
+        const opacityHere = Math.max(0.05, 2 * level), step = Math.max(0.5, k / 2);
+        for (let t = step; t < tip; t += step) {
+          const x = ex + ux * t, y = ey + uy * t;
+          const pr = crossProfile(covMass, W, H, x, y, -uy, ux, r + 2 * k, k);
+          const w = Math.min(pr.mass / opacityHere, 2 * (tip - t), ws[m - 1]);
+          if (!(w > 0.25 * k)) break;
+          pts.push(x, y); ws.push(w);
+          for (const a of extra) a.push(a[a.length - 1]);
+        }
+        return;
+      }
+      // Round end: the crossing above lands up to a fifth of a pixel short (edge pixels only partly cover the
+      // curve), so place the cap where it holds as much ink as the drawing has past a cut one radius back.
+      const o = Math.max(0.05, 2 * level), back = Math.min(r, pathLength(pts) / 2), step = Math.max(0.25, k / 4);
+      let area = 0, low = Infinity;
+      for (let t = step / 2 - back; t < tip + 2 * k; t += step) {
+        const x = ex + ux * t, y = ey + uy * t;
+        if (x < 0 || y < 0 || x >= W - 1 || y >= H - 1) break;
+        const mass = crossProfile(covMass, W, H, x, y, -uy, ux, r + 2 * k, k).mass;
+        if (mass > low + 0.4 * o * r) break;   // rising again: another line ahead
+        low = Math.min(low, mass); area += mass * step;
+      }
+      const capped = (area / o - Math.PI * r * r / 2) / (2 * r) - back;
+      const fit = r > 0 && Math.abs(capped - shift) <= Math.max(k, r / 2) ? capped : shift;
+      if (fit >= 0) { pts[2 * m - 2] = ex + ux * fit; pts[2 * m - 1] = ey + uy * fit; return; }
+      let budget = Math.min(-fit, pathLength(pts) / 2);
       while (budget > 1e-9 && pts.length > 4) {
         const ax = pts[pts.length - 4], ay = pts[pts.length - 3], bx = pts[pts.length - 2], by = pts[pts.length - 1];
         const seg = Math.hypot(bx - ax, by - ay);
         if (seg > budget) { pts[pts.length - 2] = bx + (ax - bx) * budget / seg; pts[pts.length - 1] = by + (ay - by) * budget / seg; break; }
         budget -= seg; pts.length -= 2; ws.length -= 1;
+        for (const a of extra) a.length -= 1;
       }
     };
+    // Values known at the `at` indices, spread linearly to all n points (held flat beyond the ends).
+    const spread = (at, values, n) => {
+      const out = new Array(n);
+      for (let i = 0, j = 0; i < n; i++) {
+        while (j < at.length - 1 && at[j + 1] <= i) j++;
+        const l = at[j], r = at[Math.min(j + 1, at.length - 1)], vl = values[j], vr = values[Math.min(j + 1, at.length - 1)];
+        out[i] = i <= l || l === r ? vl : vl + (vr - vl) * (i - l) / (r - l);
+      }
+      return out;
+    };
+    const medianFilter = (values, radius) => values.map((_, i) => quantile(values.slice(Math.max(0, i - radius), i + radius + 1), 0.5));
 
     const finish = (chain) => {
       const raw = chain.pts, n = raw.length / 2;
       const at = (i) => Math.round(raw[2 * i + 1]) * W + Math.round(raw[2 * i]);
       const flagged = new Uint8Array(n);
-      for (const m of chain.marks) for (let i = 0; i < n; i++) if (Math.hypot(raw[2 * i] - m.x, raw[2 * i + 1] - m.y) < m.span + 2) flagged[i] = 1;
-      // Cross-sections away from junctions: ink mass across the line (= width x core) and its centroid.
-      const guide = gaussianSmooth(raw, false, 1.5);
-      const mass = new Float64Array(n), peaks = [], measured = [], refined = raw.slice();
+      for (const m of chain.marks) for (let i = 0; i < n; i++) if (Math.hypot(raw[2 * i] - m.x, raw[2 * i + 1] - m.y) < m.span + 2 * k) flagged[i] = 1;
+      // Cross-sections away from junctions: ink mass across the line (= width x opacity), centroid and peak.
+      const guide = gaussianSmooth(raw, false, 1.5 * k);
+      const span = Math.max(2, Math.round(2 * k));
+      const mass = new Float64Array(n), tops = new Float64Array(n), measured = [], refined = raw.slice();
       for (let i = 0; i < n; i++) {
         if (flagged[i]) continue;
-        const a = Math.max(0, i - 2), b = Math.min(n - 1, i + 2);
+        const a = Math.max(0, i - span), b = Math.min(n - 1, i + span);
         const [tx, ty] = direction([guide[2 * a], guide[2 * a + 1]], [guide[2 * b], guide[2 * b + 1]]);
         if (!tx && !ty) continue;
         const x = raw[2 * i], y = raw[2 * i + 1];
-        const pr = crossProfile(cov, W, H, x, y, -ty, tx, dist[at(i)] + 2.5);
+        const pr = crossProfile(covMass, W, H, x, y, -ty, tx, dist[at(i)] + 2.5 * k, k, cov);
         if (pr.mass <= 0) continue;
-        measured.push(i); mass[i] = pr.mass; peaks.push(pr.peak);
-        const shift = clamp(pr.offset, -1.5, 1.5);
+        measured.push(i); mass[i] = pr.mass; tops[i] = pr.peak;
+        const shift = clamp(pr.offset, -1.5 * k, 1.5 * k);
         refined[2 * i] = x - ty * shift; refined[2 * i + 1] = y + tx * shift;
       }
       // Near a junction the skeleton bends towards the other branches: run the line straight across,
@@ -704,81 +1046,152 @@
       const onInk = (a, b) => {
         const ax = refined[2 * a], ay = refined[2 * a + 1], bx = refined[2 * b], by = refined[2 * b + 1];
         const steps = Math.ceil(Math.hypot(bx - ax, by - ay));
-        for (let k = 1; k < steps; k++) if (!ink[Math.round(ay + (by - ay) * k / steps) * W + Math.round(ax + (bx - ax) * k / steps)]) return false;
+        for (let s = 1; s < steps; s++) if (!ink[Math.round(ay + (by - ay) * s / steps) * W + Math.round(ax + (bx - ax) * s / steps)]) return false;
         return true;
       };
       for (let i = 0, prev = -1; i < n; i++) {
         if (flagged[i] && i > 0 && i < n - 1) continue;
         if (prev >= 0 && i - prev > 1 && onInk(prev, i)) {
-          for (let k = prev + 1; k < i; k++) {
-            const t = (k - prev) / (i - prev);
-            refined[2 * k] = refined[2 * prev] + (refined[2 * i] - refined[2 * prev]) * t;
-            refined[2 * k + 1] = refined[2 * prev + 1] + (refined[2 * i + 1] - refined[2 * prev + 1]) * t;
+          for (let s = prev + 1; s < i; s++) {
+            const t = (s - prev) / (i - prev);
+            refined[2 * s] = refined[2 * prev] + (refined[2 * i] - refined[2 * prev]) * t;
+            refined[2 * s + 1] = refined[2 * prev + 1] + (refined[2 * i + 1] - refined[2 * prev + 1]) * t;
           }
         }
         prev = i;
       }
-      // Core coverage = how opaque the line is (semi-transparent ink stays below 1).
-      let core = peaks.length ? quantile(peaks, 0.9) : 0;
+      // An end at a junction was never measured: it sits where the skeleton met the other line. Put it back on
+      // this line's own centre (the measured centre line run straight on), keeping its place along the line.
+      if (!chain.closed && measured.length) {
+        const settle = (end, first, ahead) => {
+          const bx = refined[2 * first], by = refined[2 * first + 1];
+          const [dx, dy] = direction([bx, by], [refined[2 * ahead], refined[2 * ahead + 1]]);
+          if (!dx && !dy) return;
+          for (let i = end; i !== first; i += first > end ? 1 : -1) {
+            const t = (refined[2 * i] - bx) * dx + (refined[2 * i + 1] - by) * dy;
+            refined[2 * i] = bx + t * dx; refined[2 * i + 1] = by + t * dy;
+          }
+        };
+        const a = measured[0], b = measured[measured.length - 1], reach = Math.max(2, Math.round(3 * k));
+        if (!chain.freeStart && a > 0) settle(0, a, Math.min(n - 1, a + reach));
+        if (!chain.freeEnd && b < n - 1) settle(n - 1, b, Math.max(0, b - reach));
+      }
+      // Opacity: the line's core is its 90th-percentile peak. A cross-section at least 2 image px wide shows
+      // its own opacity, so a line fading out is told apart from one thinning to a point (which stays opaque).
+      let core = measured.length ? quantile(measured.map((i) => tops[i]), 0.9) : 0;
       if (core < 0.05) {
         for (let i = 0; i < n; i++) core = Math.max(core, peak[at(i)]);
         core = Math.max(0.05, core);
       }
-      // Width = mass / core; points without a clean cross-section take it from measured neighbours.
-      let widths = new Array(n);
+      // Under 2 image px the peak understates opacity (the pixel is part paper): such a line is drawn opaque at its true
+      // mass, in the colour behind the coverage. A translucent ink would look the same, but thin lines are mostly opaque
+      // pens, coloured ones too (a quarter-size colour sketch scores 0.785 -> 0.866 soft IoU with this read).
+      const thin = core >= PEN_MIN_ALPHA && measured.length > 0 && quantile(measured.map((i) => mass[i] / tops[i]), 0.5) < 2 * k;
+      if (thin) core = 1;
+      let opacity = new Array(n).fill(core), widths;
       if (!measured.length) {
         let d = 0;
         for (let i = 0; i < n; i++) d = Math.max(d, dist[at(i)]);
-        widths.fill(Math.max(1, 2 * d - 1));
+        widths = new Array(n).fill(Math.max(k, 2 * d - k));
       } else {
-        for (let i = 0, j = 0; i < n; i++) {
-          while (j < measured.length - 1 && measured[j + 1] <= i) j++;
-          const l = measured[j], r = measured[Math.min(j + 1, measured.length - 1)];
-          widths[i] = (i <= l || l === r ? mass[l] : mass[l] + (mass[r] - mass[l]) * (i - l) / (r - l)) / core;
-        }
+        const own = medianFilter(measured.map((i) => (mass[i] >= 2 * k * tops[i] ? Math.min(core, tops[i]) : core)), 3 * k);
+        opacity = spread(measured, own, n);
+        // Width = mass / opacity; points without a clean cross-section take it from measured neighbours.
+        widths = medianFilter(spread(measured, measured.map((i, j) => mass[i] / Math.max(0.05, own[j])), n), 3 * k);
       }
-      widths = widths.map((_, i) => {
-        const win = [];
-        for (let j = Math.max(0, i - 3); j <= Math.min(n - 1, i + 3); j++) win.push(widths[j]);
-        return quantile(win, 0.5);
-      });
       // Even lines get one exact width (drawn at full pressure); real taper keeps its profile.
       const sample = measured.map((i) => widths[i]);
-      if (sample.length && quantile(sample, 0.9) <= 1.3 * quantile(sample, 0.1)) widths.fill(quantile(sample, 0.5));
-      // Closed lines are smoothed as rings (last point repeats the first) so the seam is not pinned.
-      let pts = chain.closed && n > 3
-        ? (() => { const ring = gaussianSmooth(refined.slice(0, -2), true, smoothSigma); return ring.concat(ring.slice(0, 2)); })()
-        : gaussianSmooth(refined, false, smoothSigma);
+      if (sample.length && quantile(sample, 0.9) <= 1.3 * quantile(sample, 0.1)) {
+        // A free end narrower than the body is a drawn taper (a pointed tip): it keeps its widths until the body.
+        const body = quantile(sample, 0.5), kept = widths.slice();
+        widths.fill(body);
+        if (chain.freeStart) for (let i = 0; i < n && kept[i] < 0.9 * body; i++) widths[i] = kept[i];
+        if (chain.freeEnd) for (let i = n - 1; i >= 0 && kept[i] < 0.9 * body; i--) widths[i] = kept[i];
+      }
+      // Closed lines are smoothed as rings (last point repeats the first) so the seam is not pinned; corners stay sharp.
+      let pts = smoothLine(refined, chain.closed, smoothSigma, Math.max(3, Math.round(Math.max(2 * k, quantile(widths, 0.5)))), 1.5 * k);
+      let ids = Array.from({ length: n }, (_, i) => i);   // raw index of each smoothed point
       if (!chain.closed) {
-        if (chain.freeEnd) fitTip(pts, widths, 0.5 * core);
+        if (chain.freeEnd) fitTip(pts, widths, 0.5 * opacity[n - 1], [opacity, ids]);
         if (chain.freeStart) {
-          pts = reversePts(pts);
-          widths.reverse();
-          fitTip(pts, widths, 0.5 * core);
-          pts = reversePts(pts);
-          widths.reverse();
+          pts = reversePts(pts); widths.reverse(); opacity.reverse(); ids.reverse();
+          fitTip(pts, widths, 0.5 * opacity[opacity.length - 1], [opacity, ids]);
+          pts = reversePts(pts); widths.reverse(); opacity.reverse(); ids.reverse();
         }
       }
-      const kept = simplifyIndices(pts, widths, epsilon);
-      const ch = [[], [], []];
-      for (let i = 0; i < n; i++) if (!flagged[i] && isCore(raw[2 * i], raw[2 * i + 1])) pixelColor(raw[2 * i], raw[2 * i + 1]).forEach((v, c) => ch[c].push(v));
-      if (!ch[0].length) for (let i = 0; i < n; i++) pixelColor(raw[2 * i], raw[2 * i + 1]).forEach((v, c) => ch[c].push(v));
-      const alpha = transparent ? (core >= 0.9 ? 255 : Math.max(1, Math.round(core * 255))) : 255;
-      strokes.push({
-        points: kept.map((i) => [pts[2 * i] - 0.5, pts[2 * i + 1] - 0.5]),
-        widths: kept.map((i) => Math.max(0.5, widths[i])),
-        color: (((alpha << 24) | (quantile(ch[0], 0.5) << 16) | (quantile(ch[1], 0.5) << 8) | quantile(ch[2], 0.5)) >>> 0),
-        closed: chain.closed,
-      });
+      // A pen line is one stroke. Where it fades, it carries its opacity per point (as a share of its solid part's), and
+      // layoutStrokes cuts it into pieces drawn in the tone they show over the page. A faint (pencil) line fades through
+      // stacked pencil layers: layer j spans the faded points at least (j - 0.5) x TONE_STEP opaque, with the alpha at
+      // which j layers composite to j x TONE_STEP.
+      const m = pts.length / 2, w50 = quantile(widths, 0.5), minLength = Math.max(4 * k, 2 * w50);
+      const op = medianFilter(opacity, Math.max(3 * k, Math.round(w50)));
+      const length = (a, b) => pathLength(pts.slice(2 * a, 2 * b + 2));
+      const runs = [];
+      for (let i = 0; i < m; i++) {
+        const solid = op[i] >= FADE_RATIO * core, last = runs[runs.length - 1];
+        if (last && last.solid === solid) last.b = i; else runs.push({ a: last ? last.b : i, b: i, solid });
+      }
+      for (let i = runs.length - 1; runs.length > 1 && i >= 0; i--) {   // a short run takes its longer neighbour's kind
+        if (length(runs[i].a, runs[i].b) >= minLength) continue;
+        const j = i > 0 ? i - 1 : 1, lo = Math.min(i, j);
+        const kind = length(runs[j].a, runs[j].b) >= length(runs[i].a, runs[i].b) ? runs[j].solid : runs[i].solid;
+        runs.splice(lo, 2, { a: runs[lo].a, b: runs[lo + 1].b, solid: kind });
+        if (lo > 0 && runs[lo - 1].solid === kind) { runs[lo - 1].b = runs[lo].b; runs.splice(lo, 1); }
+        i = Math.min(i, runs.length);
+      }
+      const emit = (a, b, pen, strength, fade) => {
+        const pp = pts.slice(2 * a, 2 * b + 2), ww = widths.slice(a, b + 1);
+        if (pp.length < 4) return;
+        const ch = [[], [], []], rawIds = ids.slice(a, b + 1);
+        if (pen === "pen" && !thin) for (const i of rawIds) if (!flagged[i] && isCore(raw[2 * i], raw[2 * i + 1])) pixelColor(raw[2 * i], raw[2 * i + 1]).forEach((v, c) => ch[c].push(v));
+        const mixed = ch[0].length ? null : inkColor(rawIds.flatMap((i) => [raw[2 * i], raw[2 * i + 1]]));
+        if (mixed) mixed.forEach((v, c) => ch[c].push(v));
+        if (!ch[0].length) for (const i of rawIds) pixelColor(raw[2 * i], raw[2 * i + 1]).forEach((v, c) => ch[c].push(v));
+        // The writer stores a point every MAX_SEGMENT page units anyway: take those from the smoothed line between
+        // the simplified points, so the stroke follows the curve instead of its chords.
+        const kept = [], maxStep = 0.95 * MAX_SEGMENT / pageScale * k, wp = quantile(ww, 0.5);
+        for (const i of simplifyIndices(pp, ww, epsilon)) {
+          for (let j = kept.length ? kept[kept.length - 1] + 1 : i, run = 0; j <= i; j++) {
+            const d = Math.hypot(pp[2 * j] - pp[2 * j - 2], pp[2 * j + 1] - pp[2 * j - 1]);
+            if (run + d > maxStep && j - 1 > kept[kept.length - 1]) { kept.push(j - 1); run = 0; }
+            run += d;
+          }
+          kept.push(i);
+        }
+        strokes.push({
+          points: kept.map((i) => toImage([pp[2 * i], pp[2 * i + 1]])),
+          widths: kept.map((i) => Math.max(0.5, (pen === "pen" ? ww[i] : wp) / k)),
+          color: argb(pen === "pen" ? penAlpha(strength) : pencilAlpha(strength), median3(ch)),
+          ...(fade && { alphas: kept.map((i) => clamp(fade[a + i], 0, 1) * penAlpha(strength) / 255) }),
+          closed: chain.closed && runs.length === 1,
+          pen,
+        });
+      };
+      if (core >= PEN_MIN_ALPHA) {
+        const solid = new Uint8Array(m);
+        for (const r of runs) if (r.solid) solid.fill(1, r.a, r.b + 1);
+        emit(0, m - 1, "pen", core, runs.every((r) => r.solid) ? null : op.map((o, i) => (solid[i] ? 1 : o / core)));
+      } else for (const r of runs) {
+        if (r.solid) { emit(r.a, r.b, "pencil", core); continue; }
+        for (let j = 1; (j - 0.5) * TONE_STEP < FADE_RATIO * core; j++) {
+          const level = (j - 0.5) * TONE_STEP, alpha = TONE_STEP / (1 - (j - 1) * TONE_STEP);
+          let start = -1, found = false;
+          for (let i = r.a; i <= r.b + 1; i++) {
+            const on = i <= r.b && op[i] >= level;
+            if (on && start < 0) start = i;
+            if (!on && start >= 0) { if (length(start, i - 1) >= w50) { emit(start, i - 1, "pencil", alpha); found = true; } start = -1; }
+          }
+          if (!found) break;
+        }
+      }
     };
     for (const chain of chains) if (chain.pts.length >= 4) finish(chain);
     for (const i of g.dots) {
       const x = i % W, y = (i / W) | 0;
-      const pr = crossProfile(cov, W, H, x, y, 1, 0, dist[i] + 2.5);
-      const core = Math.max(0.05, peak[i]);
-      const [r, gg, b] = pixelColor(x, y);
-      const alpha = transparent ? (core >= 0.9 ? 255 : Math.max(1, Math.round(core * 255))) : 255;
-      strokes.push({ points: [[x - 0.5, y - 0.5]], widths: [Math.max(1, pr.mass / core)], color: ((alpha << 24) | (r << 16) | (gg << 8) | b) >>> 0, closed: false });
+      const pr = crossProfile(covMass, W, H, x, y, 1, 0, dist[i] + 2.5 * k, k, cov);
+      const core = Math.max(0.05, peak[i]), pen = core >= PEN_MIN_ALPHA ? "pen" : "pencil";
+      const color = argb(pen === "pen" ? penAlpha(core) : pencilAlpha(core), (pen === "pen" ? null : inkColor([x, y])) || pixelColor(x, y));
+      strokes.push({ points: [toImage([x, y])], widths: [Math.max(1, pr.mass / core / k)], color, closed: false, pen });
     }
     return { strokes, width, height, transparent };
   }
@@ -804,15 +1217,15 @@
     return { width: pageWidth, height: pageHeight, scale, rect: [left, top, left + imageWidth * scale, top + imageHeight * scale] };
   }
 
-  // Pen size carries the line width; pressure (0..1 of the size) only carries tapering.
-  function layoutStrokes(traced, geometry) {
+  // Pen size carries the line width; pressure is stored as 1 (the device ignores it on InkPen2, see PEN_FADE).
+  function layoutStrokes(traced, geometry, background = 0xFFFFFFFF) {
     const [left, top] = geometry.rect, scale = geometry.scale;
     const out = [];
     for (const s of traced.strokes) {
       let pts = s.points.map(([x, y]) => [left + x * scale, top + y * scale]);
-      let widths = s.widths.map((w) => w * scale);
-      if (pts.length === 1) { pts = [pts[0], [pts[0][0] + 0.0625, pts[0][1]]]; widths = [widths[0], widths[0]]; }
-      const densePts = [pts[0]], denseWidths = [widths[0]];
+      let widths = s.widths.map((w) => w * scale), alphas = s.alphas || s.points.map(() => (s.color >>> 24) / 255);
+      if (pts.length === 1) { pts = [pts[0], [pts[0][0] + 0.0625, pts[0][1]]]; widths = [widths[0], widths[0]]; alphas = [alphas[0], alphas[0]]; }
+      const densePts = [pts[0]], denseWidths = [widths[0]], denseAlphas = [alphas[0]];
       for (let i = 1; i < pts.length; i++) {
         const [ax, ay] = pts[i - 1], [bx, by] = pts[i];
         const steps = Math.max(1, Math.ceil(Math.hypot(bx - ax, by - ay) / MAX_SEGMENT));
@@ -820,18 +1233,44 @@
           const t = k / steps;
           densePts.push([ax + (bx - ax) * t, ay + (by - ay) * t]);
           denseWidths.push(widths[i - 1] + (widths[i] - widths[i - 1]) * t);
+          denseAlphas.push(alphas[i - 1] + (alphas[i] - alphas[i - 1]) * t);
         }
       }
-      const low = quantile(denseWidths, 0.1), high = quantile(denseWidths, 0.9);
-      const uniform = high <= 1.3 * low;
-      const size = clamp(uniform ? quantile(denseWidths, 0.5) : quantile(denseWidths, 0.95), MIN_PEN_SIZE, MAX_PEN_SIZE);
-      const pressures = denseWidths.map((w) => (uniform ? 1 : clamp(w / size, 0.05, 1)));
-      for (let start = 0; start < densePts.length - 1; start += MAX_STROKE_POINTS - 1) {
-        const end = Math.min(densePts.length, start + MAX_STROKE_POINTS);
-        out.push({ points: densePts.slice(start, end), pressures: pressures.slice(start, end), size, color: s.color });
+      // Uniform only if no part narrows: the tracer already flattened noise and kept real tapers (a 10th
+      // percentile flipped with point spacing and dropped short tapers). Pencil: one width, its pressure curve is unverified.
+      const low = Math.min(...denseWidths), high = quantile(denseWidths, 0.9);
+      const fixed = s.pen === "pencil" || high <= 1.3 * low ? quantile(denseWidths, 0.5) : null;
+      // InkPen2 ignores pressure and narrows with time since pen-down (PEN_FADE), so width is carried by the pen size:
+      // a line becomes pieces short enough to keep their width, each sized to the line under it. Every joint darkens
+      // its edge pixels a little (each stroke is antialiased on its own), so thin lines, which sag less in page units,
+      // get longer pieces. Pieces overlap at joints, so a translucent line (or a fade, by its per-point opacity) is
+      // drawn in the colour it shows over the page, a piece spanning at most PIECE_ALPHA of opacity.
+      const cut = s.pen !== "pencil";
+      const over = (alpha) => { let c = 0xFF000000; for (const shift of [16, 8, 0]) c |= Math.round(((s.color >>> shift) & 255) * alpha + ((background >>> shift) & 255) * (1 - alpha)) << shift; return c >>> 0; };
+      for (let a = 0; a < densePts.length - 1;) {
+        let b = a + 1, ms = stepMs(densePts[a], densePts[b]);
+        let lo = Math.min(denseWidths[a], denseWidths[b]), hi = Math.max(denseWidths[a], denseWidths[b]);
+        let aLo = Math.min(denseAlphas[a], denseAlphas[b]), aHi = Math.max(denseAlphas[a], denseAlphas[b]);
+        while (b + 1 < densePts.length && b - a < MAX_STROKE_POINTS - 1) {
+          const next = ms + stepMs(densePts[b], densePts[b + 1]);
+          const l = Math.min(lo, denseWidths[b + 1]), h = Math.max(hi, denseWidths[b + 1]);
+          const al = Math.min(aLo, denseAlphas[b + 1]), ah = Math.max(aHi, denseAlphas[b + 1]);
+          if (cut && (penFade(next) < 1 - 2 * PIECE_TOL / (fixed ?? h) || (fixed === null && h > PIECE_TAPER * l) || ah - al > PIECE_ALPHA)) break;
+          ms = next; lo = l; hi = h; aLo = al; aHi = ah; b++;
+        }
+        let num = 0, den = 0;
+        for (let i = a, t = 0; i <= b; i++) {
+          if (i > a) t += stepMs(densePts[i - 1], densePts[i]);
+          const r = s.pen === "pencil" ? 1 : penFade(t);
+          num += (fixed ?? denseWidths[i]) * r; den += r * r;
+        }
+        const alpha = denseAlphas.slice(a, b + 1).reduce((sum, v) => sum + v, 0) / (b - a + 1);
+        out.push({ points: densePts.slice(a, b + 1), pressures: new Array(b - a + 1).fill(1), size: clamp(num / den, MIN_PEN_SIZE, MAX_PEN_SIZE), color: cut ? over(alpha) : s.color, pen: s.pen || "pen", alpha });
+        a = b;
       }
     }
-    return out;
+    // Pencil first, then pen pieces lightest first: an opaque-composited fade or translucent line never covers a darker line.
+    return out.sort((p, q) => (p.pen === "pencil" ? -1 : p.alpha) - (q.pen === "pencil" ? -1 : q.alpha));
   }
 
   // ======================================================================
@@ -847,17 +1286,39 @@
   const NOTE_HEADER_FLAGS = 0x00000008;
   const NOTE_PROPERTY_FLAGS = 0x000C8E80;
   const MEDIA_INFO_VERSION = 5500;
-  const PEN_NAME = "com.samsung.android.sdk.pen.pen.preload.InkPen2";
-  const PEN_NAME_ID = 0;
-  const PEN_ADVANCED_SETTING = "9;";
-  const PEN_ADVANCED_SETTING_ID = 1;
+  // Pen (InkPen2) and pencil (Pencil2) as the sample notes store them: string-table ids, advanced setting,
+  // flexible field 0x2000 and the drawnRect pad (InkPen2 measured, Pencil2 unmeasured: BrushPen's larger pad).
+  const PENS = {
+    pen: { name: "com.samsung.android.sdk.pen.pen.preload.InkPen2", nameId: 0, setting: "9;", settingId: 1, flex2000: 0.33, pad: (size) => size / 2 + 4 },
+    pencil: { name: "com.samsung.android.sdk.pen.pen.preload.Pencil2", nameId: 2, setting: "15;", settingId: 3, flex2000: 0.4713965654373169, pad: (size) => size + 4 },
+  };
   const STROKE_MASK1 = 0x0425;         // compact points + tilt/orientation arrays
   const STROKE_FLEX_MASK = 0x258E;     // adv. setting, colour, size, pen name, 0x100, 0x400, 0x2000
-  const INKPEN_FLEX_2000 = 0.33;
   const PEN_TILT = 0.506;              // typical S Pen tilt/orientation in the sample notes
   const PEN_ORIENTATION = -1.571;
   const PEN_SPEED = 0.5;               // page units per ms, like hand-drawn strokes
   const STROKE_GAP_MS = 150;
+  // InkPen2 on the device ignores pressure and narrows with time since pen-down: [ms, width / pen size], measured
+  // from a Samsung Notes screenshot of strokes written at PEN_SPEED (FORMAT.md section 8).
+  const PEN_FADE = [[0, 1], [12, 1], [70, 0.83], [125, 0.713], [175, 0.615], [240, 0.535]];
+  const PIECE_TOL = 0.05;              // page units a piece's width may sag under its fade before the line is cut again
+  const PIECE_TAPER = 1.12;            // and a piece spans at most this width ratio of a tapering line
+  const PIECE_ALPHA = 0.05;            // and this much opacity of a fade
+
+  const stepMs = (p, q) => clamp(Math.round(Math.hypot(q[0] - p[0], q[1] - p[1]) / PEN_SPEED), 1, 0xFFFF);
+  function penFade(ms) {
+    for (let i = 1; i < PEN_FADE.length; i++) {
+      const [t1, w1] = PEN_FADE[i], [t0, w0] = PEN_FADE[i - 1];
+      if (ms < t1) return w0 + (w1 - w0) * (Math.max(ms, t0) - t0) / (t1 - t0);
+    }
+    return PEN_FADE[PEN_FADE.length - 1][1];
+  }
+  // Width the device draws at each point of a laid-out stroke. Pencil2 is assumed to follow size x pressure (unverified).
+  function strokeWidths(s) {
+    if (s.pen === "pencil") return s.pressures.map((p) => s.size * p);
+    let ms = 0;
+    return s.points.map((p, i) => s.size * penFade(i ? (ms += stepMs(s.points[i - 1], p)) : 0));
+  }
 
   function decodeBase64(value) {
     const raw = atob(value.replace(/\s/g, ""));
@@ -1010,7 +1471,7 @@
     return { code: (value < 0 ? 0x8000 : 0) | magnitude, value: (value < 0 ? -magnitude : magnitude) / 32 };
   }
 
-  // One InkPen2 stroke object (type 1): base record + compact stroke record, FORMAT.md §4.
+  // One stroke object (type 1, InkPen2 or Pencil2): base record + compact stroke record, FORMAT.md §3.
   function packStrokeObject(stroke, objectId, saveTime, penDownMicros, pageWidth, pageHeight) {
     const points = stroke.points, n = points.length;
     if (n < 2 || n > MAX_STROKE_POINTS) throw new Error(`Stroke has ${n} points.`);
@@ -1037,7 +1498,7 @@
     geometry.i32(0);
     let duration = 0;
     for (let i = 1; i < n; i++) {
-      const dt = clamp(Math.round(Math.hypot(decoded[i][0] - decoded[i - 1][0], decoded[i][1] - decoded[i - 1][1]) / PEN_SPEED), 1, 0xFFFF);
+      const dt = stroke.ms ? stroke.ms[i - 1] : stepMs(decoded[i - 1], decoded[i]);
       geometry.u16(dt);
       duration += dt;
     }
@@ -1046,7 +1507,8 @@
     geometry.u16(2);
     const geometryBytes = geometry.toBytes();
     const flexible = new Writer();
-    flexible.u32(PEN_ADVANCED_SETTING_ID).u32(stroke.color).f32(stroke.size).u32(PEN_NAME_ID).f32(stroke.size).u32(1).f32(INKPEN_FLEX_2000);
+    const pen = PENS[stroke.pen] || PENS.pen;
+    flexible.u32(pen.settingId).u32(stroke.color).f32(stroke.size).u32(pen.nameId).f32(stroke.size).u32(1).f32(pen.flex2000);
     const flexibleBytes = flexible.toBytes();
     const flexibleOffset = 20 + geometryBytes.length;
     const own = new Writer();
@@ -1063,7 +1525,7 @@
     const hash = identityHash(objectId, saveTime);
     const object = new Writer();
     object.u8(1).u16(0).u32(payload.length + 32).bytes(payload).bytes(hash);
-    return { data: object.toBytes(), hash, id: objectId, rect, size: stroke.size, color: stroke.color, pointCount: n, durationMs: duration };
+    return { data: object.toBytes(), hash, id: objectId, rect, size: stroke.size, pad: pen.pad(stroke.size), pen: stroke.pen || "pen", color: stroke.color, pointCount: n, durationMs: duration };
   }
 
   function buildLayerSection(objects, layerOffset, now) {
@@ -1087,8 +1549,7 @@
     const propertyOffset = 0x80;
     let drawnRect = null;
     for (const o of objects) {
-      // Samsung pads the drawn area by half the InkPen2 size plus 4 units (matches all sample pages).
-      const pad = o.size / 2 + 4;
+      const pad = o.pad;   // InkPen2: half the size plus 4 units (matches all sample pages)
       const r = [o.rect[0] - pad, o.rect[1] - pad, o.rect[2] + pad, o.rect[3] + pad];
       drawnRect = drawnRect ? [Math.min(drawnRect[0], r[0]), Math.min(drawnRect[1], r[1]), Math.max(drawnRect[2], r[2]), Math.max(drawnRect[3], r[3])] : r;
     }
@@ -1148,7 +1609,7 @@
     const w = new Writer(); w.u32(bytes.length).bytes(bytes); return w.toBytes();
   }
 
-  function buildNoteFile(title, pages, now) {
+  function buildNoteFile(title, pages, now, pens) {
     const width = Math.max(...pages.map((page) => page.width));
     const height = pages.reduce((sum, page) => sum + page.height, 0) + NOTE_VERTICAL_PADDING;
     const titleObject = buildTextObject(makeUuidV1(now), now, buildTitleShape(title));
@@ -1160,7 +1621,7 @@
     data.u32(pages[0].width).u32(pages[0].height);   // header flag 0x8: page size
     const optionalOffset = data.data.length;
     data.i32(0).i32(-1).u64(0)
-      .bytes(buildStringIdBlock([[PEN_ADVANCED_SETTING_ID, PEN_ADVANCED_SETTING], [PEN_NAME_ID, PEN_NAME]]))
+      .bytes(buildStringIdBlock(pens.flatMap((p) => [[p.settingId, p.setting], [p.nameId, p.name]]).sort((a, b) => b[0] - a[0])))
       .i32(0).bytes(CURRENT_PEN_INFO).i32(2).i32(2);
     const full = data.toBytes();
     patchU32(full, 0, optionalOffset);
@@ -1234,7 +1695,7 @@
     const pageWidth = page.width, pageHeight = page.height;
     const durations = strokes.map((s) => {
       let ms = 0;
-      for (let i = 1; i < s.points.length; i++) ms += clamp(Math.round(Math.hypot(s.points[i][0] - s.points[i - 1][0], s.points[i][1] - s.points[i - 1][1]) / PEN_SPEED), 1, 0xFFFF);
+      for (let i = 1; i < s.points.length; i++) ms += s.ms ? s.ms[i - 1] : stepMs(s.points[i - 1], s.points[i]);
       return ms + STROKE_GAP_MS;
     });
     let penDown = now - BigInt(durations.reduce((a, b) => a + b, 0)) * 1000n;
@@ -1246,7 +1707,7 @@
     const mainPage = buildPage(makeUuidV1(now), pageWidth, pageHeight, background >>> 0, objects, now);
     const blankPage = buildPage(makeUuidV1(now), BLANK_PAGE_WIDTH, BLANK_PAGE_HEIGHT, background >>> 0, [], now);
     const pages = [mainPage, blankPage];
-    const note = buildNoteFile(title, pages, now);
+    const note = buildNoteFile(title, pages, now, [PENS.pen, ...(objects.some((o) => o.pen === "pencil") ? [PENS.pencil] : [])]);
     const noteWidth = Math.max(...pages.map((p) => p.width));
     const noteHeight = pages.reduce((sum, p) => sum + p.height, 0) + NOTE_VERTICAL_PADDING;
     const endTag = buildEndTag(noteWidth, noteHeight, now, now);
@@ -1261,7 +1722,7 @@
     return { bytes, objects, pageWidth, pageHeight, drawnRect: mainPage.drawnRect };
   }
 
-  global.SdocxCore = { vectorize, pageGeometry, layoutStrokes, buildSdocx, MAX_STROKES };
+  global.SdocxCore = { vectorize, pageGeometry, layoutStrokes, buildSdocx, penFade, strokeWidths, MAX_STROKES };
 })(globalThis);
 </script>
 
@@ -1348,7 +1809,7 @@
 
   function currentLayout() {
     const geometry = core.pageGeometry(selected.width, selected.height, marginInput.value);
-    return { geometry, strokes: core.layoutStrokes(traced, geometry) };
+    return { geometry, strokes: core.layoutStrokes(traced, geometry, chooseBackground(selected.bitmap)) };
   }
 
   function drawPreview() {
@@ -1363,27 +1824,46 @@
     strokeCanvas.style.width = Math.round(geometry.width * view) + "px";
     const ctx = strokeCanvas.getContext("2d");
     ctx.setTransform(view * ratio, 0, 0, view * ratio, 0, 0);
-    ctx.fillStyle = "#" + (background & 0xFFFFFF).toString(16).padStart(6, "0");
+    const pageColor = "#" + (background & 0xFFFFFF).toString(16).padStart(6, "0");
+    ctx.fillStyle = pageColor;
     ctx.fillRect(0, 0, geometry.width, geometry.height);
+    paintStrokes(ctx, strokes);
+    // The picture, placed on the same page as the strokes, for the comparison slider.
+    const pictureCanvas = $("picture-canvas"), [left, top] = geometry.rect;
+    pictureCanvas.width = strokeCanvas.width; pictureCanvas.height = strokeCanvas.height;
+    const pc = pictureCanvas.getContext("2d");
+    pc.setTransform(view * ratio, 0, 0, view * ratio, 0, 0);
+    pc.fillStyle = pageColor;
+    pc.fillRect(0, 0, geometry.width, geometry.height);
+    pc.imageSmoothingQuality = "high";
+    pc.drawImage(selected.bitmap, left, top, selected.width * geometry.scale, selected.height * geometry.scale);
+    const points = strokes.reduce((sum, s) => sum + s.points.length, 0);
+    $("stroke-count").textContent = `${strokes.length.toLocaleString()} strokes · ${points.toLocaleString()} points`;
+    $("match").textContent = `${(100 * matchScore(geometry, strokes, background)).toFixed(1)}%`;
+  }
+
+  // Draws layout strokes (page units) the way the phone draws them.
+  function paintStrokes(ctx, strokes) {
     ctx.lineCap = "round"; ctx.lineJoin = "round";
     for (const s of strokes) {
       const a = ((s.color >>> 24) & 255) / 255;
       ctx.strokeStyle = `rgba(${(s.color >>> 16) & 255},${(s.color >>> 8) & 255},${s.color & 255},${a})`;
-      if (s.pressures.every((p) => p === 1)) {
-        ctx.lineWidth = s.size;
+      const widths = core.strokeWidths(s);   // what the device draws, not the stored pressure
+      if (widths.every((w) => w === widths[0])) {
+        ctx.lineWidth = widths[0];
         ctx.beginPath();
         s.points.forEach(([x, y], i) => (i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)));
         ctx.stroke();
         continue;
       }
-      // Tapered: union of discs and joining quads, filled once (nonzero, all subpaths clockwise).
+      // Varying width: union of discs and joining quads, filled once (nonzero, all subpaths clockwise).
       ctx.fillStyle = ctx.strokeStyle;
       const outline = new Path2D();
       s.points.forEach(([x, y], i) => {
-        const r = s.size * s.pressures[i] / 2;
+        const r = widths[i] / 2;
         outline.moveTo(x + r, y); outline.arc(x, y, r, 0, 2 * Math.PI);
         if (!i) return;
-        const [px, py] = s.points[i - 1], pr = s.size * s.pressures[i - 1] / 2;
+        const [px, py] = s.points[i - 1], pr = widths[i - 1] / 2;
         const len = Math.hypot(x - px, y - py);
         if (len <= Math.abs(r - pr)) return;
         const nx = -(y - py) / len, ny = (x - px) / len;
@@ -1392,8 +1872,33 @@
       });
       ctx.fill(outline);
     }
-    const points = strokes.reduce((sum, s) => sum + s.points.length, 0);
-    $("stroke-count").textContent = `${strokes.length.toLocaleString()} strokes · ${points.toLocaleString()} points`;
+  }
+
+  // Accuracy: the strokes drawn at the picture's own resolution against the picture, both over the page colour. Each
+  // pixel's ink is its largest channel distance from that colour; score = shared ink / ink in either (soft IoU).
+  function matchScore(geometry, strokes, background) {
+    const { width, height, pixels } = selected, [left, top] = geometry.rect, scale = geometry.scale;
+    const canvas = document.createElement("canvas");
+    canvas.width = width; canvas.height = height;
+    const ctx = canvas.getContext("2d", { willReadFrequently: true });
+    ctx.fillStyle = "#" + (background & 0xFFFFFF).toString(16).padStart(6, "0");
+    ctx.fillRect(0, 0, width, height);
+    ctx.setTransform(1 / scale, 0, 0, 1 / scale, -left / scale, -top / scale);
+    paintStrokes(ctx, strokes);
+    const drawn = ctx.getImageData(0, 0, width, height).data;
+    canvas.width = 1; canvas.height = 1;
+    const bg = [(background >>> 16) & 255, (background >>> 8) & 255, background & 255];
+    let shared = 0, total = 0;
+    for (let i = 0; i < drawn.length; i += 4) {
+      const alpha = pixels[i + 3] / 255;
+      let ours = 0, theirs = 0;
+      for (let c = 0; c < 3; c++) {
+        ours = Math.max(ours, Math.abs(drawn[i + c] - bg[c]));
+        theirs = Math.max(theirs, alpha * Math.abs(pixels[i + c] - bg[c]));
+      }
+      shared += Math.min(ours, theirs); total += Math.max(ours, theirs);
+    }
+    return total ? shared / total : 1;
   }
 
   async function retrace() {
@@ -1409,11 +1914,11 @@
       if (traced.strokes.length > core.MAX_STROKES) throw new Error(`${traced.strokes.length.toLocaleString()} lines found: this looks like a photo or shaded image. Use line art.`);
       drawPreview();
       convertButton.disabled = false;
-      setStatus(`Ready — ${traced.strokes.length.toLocaleString()} strokes traced in ${Math.round(performance.now() - started)} ms.`);
+      setStatus(`Ready — ${traced.strokes.length.toLocaleString()} lines traced in ${Math.round(performance.now() - started)} ms.`);
     } catch (error) {
       console.error(error);
       traced = null;
-      $("stroke-count").textContent = "";
+      $("stroke-count").textContent = ""; $("match").textContent = "";
       setStatus(error?.message || "Could not trace this image.", true);
     }
   }
@@ -1451,6 +1956,7 @@
   dropzone.addEventListener("drop", event => useFile(event.dataTransfer?.files?.[0]));
   marginInput.addEventListener("input", () => { $("margin-value").textContent = `${marginInput.value}%`; drawPreview(); });
   $("background").addEventListener("change", drawPreview);
+  $("split").addEventListener("input", (event) => $("compare").style.setProperty("--split", `${event.target.value}%`));
   detailInput.addEventListener("input", () => {
     $("detail-value").textContent = detailInput.value;
     clearTimeout(traceTimer);

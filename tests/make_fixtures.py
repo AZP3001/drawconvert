@@ -6,21 +6,30 @@ thick_brush.png   opaque white paper, dark 10-36 px brush strokes with tapered e
 color_sketch.png  transparent, coloured and semi-transparent (alpha 0.6-1) pen sketch with crossings
 sketchy.png       transparent mesh of curves each gone over twice: thin paper slivers between the passes
                   put many junctions close together (the case that once merged a whole drawing into one point)
+thin_lines.png    transparent, black 0.8-2 px antialiased lines: diagonals, circle, sine, X, T, close parallels
+shading.png       opaque white paper, line art with pencil-style shading: radial gradient, flat grey fill,
+                  cel shadow, a line fading out and a grainy hatched patch
+*_q.png           the same drawing rendered at a quarter of the size (lines 0.6-1.5 px), for low-res tests
 """
 import math
 import os
+import random
 
 import cairo
 
 OUT = os.path.join(os.path.dirname(os.path.abspath(__file__)), "fixtures")
 
 
+SCALE = 1.0  # main() redraws every fixture at 1/4 size for the low-res variants
+
+
 def canvas(width, height, paper=None):
-    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, width, height)
+    surface = cairo.ImageSurface(cairo.FORMAT_ARGB32, round(width * SCALE), round(height * SCALE))
     ctx = cairo.Context(surface)
     if paper:
         ctx.set_source_rgb(*paper)
         ctx.paint()
+    ctx.scale(SCALE, SCALE)
     ctx.set_line_cap(cairo.LINE_CAP_ROUND)
     ctx.set_line_join(cairo.LINE_JOIN_ROUND)
     return surface, ctx
@@ -146,12 +155,99 @@ def sketchy():
     return surface
 
 
+def thin_lines():
+    surface, ctx = canvas(800, 600)
+    black = (0, 0, 0, 1)
+    for i, width in enumerate([0.8, 1.0, 1.25, 1.5, 2.0]):                # shallow diagonals, sub-pixel offsets
+        pen(ctx, [(60, 60.3 + 45 * i), (380, 85.7 + 45 * i)], width, black)
+    pen(ctx, circle(590, 150, 100), 1.0, black, closed=True)
+    pen(ctx, [(60 + i, 330 + 25 * math.sin(i / 22)) for i in range(0, 321, 2)], 1.25, black)
+    pen(ctx, [(470, 330), (730, 530)], 1.5, black)                      # X crossing
+    pen(ctx, [(730, 330), (470, 530)], 1.5, black)
+    pen(ctx, [(60, 420), (380, 420)], 1.0, black)                       # parallels 6 px apart
+    pen(ctx, [(60, 426), (380, 426)], 1.0, black)
+    pen(ctx, [(60, 500), (380, 500)], 2.0, black)                       # T junction
+    pen(ctx, [(220, 500), (220, 570)], 2.0, black)
+    return surface
+
+
+def shading():
+    surface, ctx = canvas(1000, 1000, paper=(1, 1, 1))
+    ink, grey = (0.1, 0.1, 0.1, 1), (0.1, 0.1, 0.1)
+    # sphere: soft radial shading, light from the upper left, inside a pen outline
+    glow = cairo.RadialGradient(230, 220, 10, 280, 280, 185)
+    glow.add_color_stop_rgba(0, *grey, 0.0)
+    glow.add_color_stop_rgba(1, *grey, 0.55)
+    ctx.arc(280, 280, 180, 0, 2 * math.pi)
+    ctx.set_source(glow)
+    ctx.fill()
+    pen(ctx, circle(280, 280, 180), 5, ink, closed=True)
+    # box: flat grey fill, and a darker cel shadow along its right side
+    ctx.rectangle(570, 110, 320, 300)
+    ctx.set_source_rgba(*grey, 0.3)
+    ctx.fill()
+    ctx.move_to(800, 110)
+    ctx.line_to(890, 110)
+    ctx.line_to(890, 410)
+    ctx.curve_to(840, 330, 820, 230, 800, 110)
+    ctx.set_source_rgba(*grey, 0.35)
+    ctx.fill()
+    pen(ctx, [(570, 110), (890, 110), (890, 410), (570, 410)], 4, ink, closed=True)
+    # a pen line that fades out (soft airbrush end)
+    fade = cairo.LinearGradient(100, 0, 520, 0)
+    fade.add_color_stop_rgba(0, *grey, 1)
+    fade.add_color_stop_rgba(0.45, *grey, 1)
+    fade.add_color_stop_rgba(1, *grey, 0)
+    ctx.set_source(fade)
+    ctx.set_line_width(7)
+    ctx.move_to(100, 560)
+    ctx.curve_to(220, 520, 380, 600, 520, 560)
+    ctx.stroke()
+    # grainy pencil patch: many faint short hatches inside an ellipse, plus its outline
+    rng = random.Random(7)
+    ctx.save()
+    ctx.translate(700, 720)
+    ctx.scale(1.0, 0.7)
+    ctx.arc(0, 0, 190, 0, 2 * math.pi)
+    ctx.restore()
+    ctx.save()
+    ctx.clip()
+    ctx.set_line_width(1.6)
+    for _ in range(2600):
+        x, y = rng.uniform(500, 900), rng.uniform(580, 860)
+        a = rng.uniform(0.9, 1.3)
+        ctx.set_source_rgba(*grey, rng.uniform(0.08, 0.16))
+        ctx.move_to(x, y)
+        ctx.line_to(x + 22 * math.cos(a), y - 22 * math.sin(a))
+        ctx.stroke()
+    ctx.restore()
+    ctx.save()
+    ctx.translate(700, 720)
+    ctx.scale(1.0, 0.7)
+    ctx.arc(0, 0, 190, 0, 2 * math.pi)
+    ctx.restore()
+    ctx.set_source_rgba(*ink)
+    ctx.set_line_width(4)
+    ctx.stroke()
+    # plain lines nearby: must stay pen lines
+    pen(ctx, [(80, 700), (420, 700)], 4, ink)
+    pen(ctx, bezier((80, 780), (200, 700), (300, 900), (420, 820)), 3, ink)
+    return surface
+
+
 def main():
+    global SCALE
     os.makedirs(OUT, exist_ok=True)
-    for name, build in [("simple_lines", simple_lines), ("thick_brush", thick_brush), ("color_sketch", color_sketch), ("sketchy", sketchy)]:
-        path = os.path.join(OUT, name + ".png")
-        build().write_to_png(path)
-        print("wrote", path)
+    builds = [("simple_lines", simple_lines), ("thick_brush", thick_brush), ("color_sketch", color_sketch), ("sketchy", sketchy),
+              ("thin_lines", thin_lines), ("shading", shading)]
+    for scale, suffix in [(1.0, ""), (0.25, "_q")]:
+        SCALE = scale
+        for name, build in builds:
+            if suffix and name in ("sketchy", "thin_lines"):
+                continue  # their 1-3 px detail has nothing left at quarter size
+            path = os.path.join(OUT, name + suffix + ".png")
+            build().write_to_png(path)
+            print("wrote", path)
 
 
 if __name__ == "__main__":
