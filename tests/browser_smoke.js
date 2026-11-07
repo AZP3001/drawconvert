@@ -115,7 +115,7 @@ async function main() {
       await new Promise((r) => setTimeout(r, 400));
       await waitStatus(`${name} re-trace`);
       await evaluate('(() => { const m = document.getElementById("margin"); m.value = "6"; m.dispatchEvent(new Event("input")); const b = document.getElementById("background"); b.value = "auto"; b.dispatchEvent(new Event("change")); })()');
-      await evaluate(`(() => { const d = document.getElementById("detail"); d.value = "60"; d.dispatchEvent(new Event("input")); document.getElementById("note-name").value = ${JSON.stringify(name)}; })()`);
+      await evaluate(`(() => { const d = document.getElementById("detail"); d.value = "100"; d.dispatchEvent(new Event("input")); document.getElementById("note-name").value = ${JSON.stringify(name)}; })()`);
       await new Promise((r) => setTimeout(r, 400));
       await waitStatus(`${name} re-trace`);
       // Lines are written as pieces whose count follows the page scale, so compare with the preview as converted (margin 6).
@@ -130,10 +130,11 @@ async function main() {
       const reported = Number((final.match(/([\d,]+) strokes/) || [])[1]?.replace(/,/g, ''));
       if (written !== reported || written !== shown) { failures++; console.log(`  FAIL ${name}: preview ${shown}, status ${reported}, file ${written} strokes`); }
       if (doc.pages[0].properties.bgColor === undefined) { failures++; console.log(`  FAIL ${name}: page background missing`); }
+      if (fs.readFileSync(file).readUInt16LE(8) !== 8) { failures++; console.log(`  FAIL ${name}: note not deflated`); }
       // The accuracy shown under the preview: a misplaced or unpainted comparison scores far below the fixtures' ~90-99 %.
       const match = await evaluate('document.getElementById("match").textContent');
       if (!(parseFloat(match) >= 85 && parseFloat(match) <= 100)) { failures++; console.log(`  FAIL ${name}: accuracy shows "${match}"`); }
-      console.log(`  ${name}: ${status} | preview ${count}, ${inked} inked px, accuracy ${match}, picture overlap ${overlap.toFixed(3)} | downloaded ${path.basename(file)} → ${written} strokes, parses OK`);
+      console.log(`  ${name}: ${status} | preview ${count}, ${inked} inked px, accuracy ${match}, picture overlap ${overlap.toFixed(3)} | downloaded ${path.basename(file)} (${Math.round(fs.statSync(file).size / 1024)} KB, deflated: ${fs.readFileSync(file).readUInt16LE(8) === 8}) → ${written} strokes, parses OK`);
     }
   } finally {
     ws.close();

@@ -5,3 +5,4 @@ __pycache__/
 # your own drawings and phone screenshots in the project root stay local
 /*.png
 /*.jpg
+/Phone/

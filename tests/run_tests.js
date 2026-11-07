@@ -36,7 +36,7 @@ const FIXTURES = [
   { name: 'color_sketch_q', truth: 'color_sketch', lines: null, palette: null, iouTarget: 0.6 },
   { name: 'shading_q', truth: 'shading', lines: null, palette: null, pencil: [rgb(0, 0, 0)], toneTarget: 0.03, iouTarget: 0.6 },
 ];
-const DEFAULT_DETAIL = 60;   // matches the slider's default in the HTML
+const DEFAULT_DETAIL = 100;   // matches the slider's default in the HTML
 const MARGIN_PERCENT = 2;    // matches the margin slider's default
 const IOU_TARGET = 0.85;
 const INKPEN2 = 'com.samsung.android.sdk.pen.pen.preload.InkPen2';
@@ -494,7 +494,7 @@ function main() {
   console.log('Fixtures (generated .sdocx re-parsed, rendered back, compared):');
   for (const fixture of FIXTURES) {
     try {
-      for (const detail of [DEFAULT_DETAIL, 0, 100]) runFixture(core, fixture, ref, profiles, { detail, save: detail === DEFAULT_DETAIL, titleRecordSize });
+      for (const detail of [DEFAULT_DETAIL, 0, 60]) runFixture(core, fixture, ref, profiles, { detail, save: detail === DEFAULT_DETAIL, titleRecordSize });
     } catch (error) {
       check(false, `${fixture.name}: ${error.stack}`);
     }
@@ -531,6 +531,28 @@ function runEdgeCases(core) {
     }
     check(traced.strokes.length === expected && parsed === written, `${name}: ${traced.strokes.length} lines traced (expected ${expected}), ${parsed} of ${written} strokes parsed`);
     console.log(`  ${name}: ${traced.strokes.length} strokes in ${Date.now() - started} ms`);
+  }
+  // A photographed page: warm paper lit from the top left (255 -> ~170 at the far corner) with one dark line.
+  {
+    const w = 300, h = 200, px = new Uint8ClampedArray(w * h * 4);
+    for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+      const light = 1 - 0.33 * Math.hypot(x / w, y / h) / Math.SQRT2, line = Math.abs(y - 100) < 2 && x > 30 && x < 270;
+      px.set([255 * light, 240 * light, 220 * light].map((v) => (line ? v * 0.15 : v)).concat(255), (y * w + x) * 4);
+    }
+    const flat = core.flattenPaper(px, w, h), at = (x, y) => flat[(y * w + x) * 4 + 1];
+    check(flat !== px && [at(2, 2), at(w - 3, 2), at(2, h - 3), at(w - 3, h - 3)].every((v) => v >= 245) && at(150, 100) < 60,
+      `paper flattening: corners ${[at(2, 2), at(w - 3, 2), at(2, h - 3), at(w - 3, h - 3)]}, line ${at(150, 100)}`);
+    const even = image(64, 64, (x, y) => x === y);
+    for (let i = 0; i < even.length; i += 4) if (!even[i + 3]) even.set([255, 255, 255, 255], i);
+    check(core.flattenPaper(even, 64, 64) === even, 'paper flattening changed an evenly lit image');
+    console.log(`  photographed paper: corners ${[at(2, 2), at(w - 3, 2), at(2, h - 3), at(w - 3, h - 3)].join('/')} after flattening, line ${at(150, 100)}`);
+  }
+  // Light colours on white paper read as low coverage; they must still be Pen strokes in their own colour, not pencil.
+  for (const rgbIn of [[255, 170, 200], [150, 200, 255], [255, 230, 0]]) {
+    const w = 120, h = 60, px = new Uint8ClampedArray(w * h * 4).fill(255);
+    for (let y = 28; y < 32; y++) for (let x = 10; x < 110; x++) px.set(rgbIn, (y * w + x) * 4);
+    const s = core.vectorize(px, w, h, { detail: DEFAULT_DETAIL }).strokes, want = (0xFF000000 | (rgbIn[0] << 16) | (rgbIn[1] << 8) | rgbIn[2]) >>> 0;
+    check(s.length === 1 && s[0].pen === 'pen' && s[0].color === want, `light colour ${rgbIn}: ${s.map((q) => `${q.pen} ${q.color.toString(16)}`)}`);
   }
   const refuses = (build, pattern) => { try { build(); return false; } catch (error) { return pattern.test(error.message); } };
   const page = core.pageGeometry(100, 100, 0);

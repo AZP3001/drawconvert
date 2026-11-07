@@ -155,8 +155,8 @@
       <div class="field">
         <label for="detail">Detail <span class="hint">Left smooths lines, right keeps every wiggle</span></label>
         <div class="range-row">
-          <input id="detail" type="range" min="0" max="100" step="5" value="60">
-          <output id="detail-value" for="detail">60</output>
+          <input id="detail" type="range" min="0" max="100" step="5" value="100">
+          <output id="detail-value" for="detail">100</output>
         </div>
       </div>
       <button class="button" id="convert" type="button" disabled>Convert to .sdocx <span aria-hidden="true">↗</span></button>
@@ -213,8 +213,8 @@
   const FADE_RATIO = 0.7;        // the part of a line below this share of its opacity is a fade: stacked pencil strokes
   const TONE_STEP = 0.1;         // pencil tone resolution: a hatch stroke spans at most this, a fade layer adds this
   const SHADE_MIN = 0.06;        // lightest tone that is shaded
-  const SHADE_MAX = 0.6;         // darker ink is line work or solid fill (pen), never shading
-  const PENCIL_SIZE = 4;         // page units: pencil width and hatch spacing for shading
+  const SHADE_MAX = 0.72;        // darker ink is line work or solid fill (pen), never shading: the pencil's darkest tone (PENCIL_TONE)
+  const PENCIL_SIZE = 3;         // page units: pencil width and hatch spacing for shading
   const OFF_X = [-1, 0, 1, 1, 1, 0, -1, -1];  // 8-neighbours p0..p7, clockwise from top-left
   const OFF_Y = [-1, -1, -1, 0, 1, 1, 1, 0];
 
@@ -250,6 +250,66 @@
     }
     return table;
   })();
+
+  // A photo of a drawing on paper is unevenly lit and tinted. The paper's colour is fitted per channel as a smooth
+  // quadratic over the brightest pixels of each cell (cells darker than the fit hold ink and are dropped), and every
+  // pixel is divided by it, so the paper reads as even white. Returns the same array when the image is transparent,
+  // the paper is dark, or it is lit evenly (under 4 % brightness change), so scans and digital drawings stay as they are.
+  function flattenPaper(rgba, width, height) {
+    const C = Math.max(4, Math.ceil(Math.max(width, height) / 48)), cells = [];
+    for (let y0 = 0; y0 < height; y0 += C) for (let x0 = 0; x0 < width; x0 += C) {
+      const ids = [], lums = [];
+      for (let y = y0; y < Math.min(height, y0 + C); y++) for (let x = x0; x < Math.min(width, x0 + C); x++) {
+        const i = (y * width + x) * 4;
+        if (rgba[i + 3] < 250) return rgba;
+        ids.push(i); lums.push(rgba[i] + rgba[i + 1] + rgba[i + 2]);
+      }
+      const top = quantile(lums, 0.9), sum = [0, 0, 0];
+      let n = 0;
+      ids.forEach((i, j) => { if (lums[j] >= top) { for (let c = 0; c < 3; c++) sum[c] += rgba[i + c]; n++; } });
+      cells.push({ u: (x0 + C / 2) / width - 0.5, v: (y0 + C / 2) / height - 0.5, rgb: sum.map((v) => v / n) });
+    }
+    const basis = (u, v) => [1, u, v, u * u, u * v, v * v];
+    const fit = (list, value) => {   // least squares over the six basis terms (normal equations, Gaussian elimination)
+      const A = Array.from({ length: 6 }, () => new Array(7).fill(0));
+      for (const cell of list) {
+        const f = basis(cell.u, cell.v), y = value(cell);
+        for (let r = 0; r < 6; r++) { for (let c = 0; c < 6; c++) A[r][c] += f[r] * f[c]; A[r][6] += f[r] * y; }
+      }
+      for (let c = 0; c < 6; c++) {
+        let best = c;
+        for (let r = c + 1; r < 6; r++) if (Math.abs(A[r][c]) > Math.abs(A[best][c])) best = r;
+        [A[c], A[best]] = [A[best], A[c]];
+        if (Math.abs(A[c][c]) < 1e-12) return null;
+        for (let r = 0; r < 6; r++) if (r !== c) { const m = A[r][c] / A[c][c]; for (let k = c; k < 7; k++) A[r][k] -= m * A[c][k]; }
+      }
+      return A.map((row, r) => row[6] / row[r]);
+    };
+    const at = (w, u, v) => basis(u, v).reduce((sum, f, j) => sum + f * w[j], 0);
+    const lum = (cell) => cell.rgb[0] + cell.rgb[1] + cell.rgb[2];
+    const middle = quantile(cells.map(lum), 0.5);
+    let paper = cells.filter((cell) => lum(cell) >= middle), w = null;
+    for (let pass = 0; pass < 6 && paper.length >= 12; pass++) {
+      w = fit(paper, lum);
+      if (!w) return rgba;
+      paper = cells.filter((cell) => lum(cell) >= 0.97 * at(w, cell.u, cell.v));
+    }
+    if (!w || paper.length < 12) return rgba;
+    const fitted = cells.map((cell) => at(w, cell.u, cell.v)), lo = Math.min(...fitted), hi = Math.max(...fitted);
+    if (hi / 3 < 96 || lo > 0.96 * hi) return rgba;
+    const channels = [0, 1, 2].map((c) => fit(paper, (cell) => cell.rgb[c]));
+    if (channels.includes(null)) return rgba;
+    const out = new Uint8ClampedArray(rgba.length);
+    for (let y = 0; y < height; y++) {
+      const v = (y + 0.5) / height - 0.5;
+      for (let x = 0; x < width; x++) {
+        const u = (x + 0.5) / width - 0.5, i = (y * width + x) * 4;
+        for (let c = 0; c < 3; c++) out[i + c] = 255 * rgba[i + c] / Math.max(1, at(channels[c], u, v));
+        out[i + 3] = 255;
+      }
+    }
+    return out;
+  }
 
   function borderColor(rgba, width, height) {
     const channels = [[], [], []];
@@ -359,7 +419,25 @@
     const toCentre = distanceTransform(off, W, H);
     const shade = new Uint8Array(N);
     for (let i = 0; i < N; i++) shade[i] = light[i] && toCentre[i] <= radius ? 1 : 0;
-    return shade;
+    // Crowded line work can pass as broad light ink too. Real shading is even (tone spread up to 0.16 on the test
+    // drawings and photos), crowded lines mix paper and ink (spread 0.19-0.31), so such a region stays line work.
+    const seen = new Uint8Array(N);
+    let kept = false;
+    for (let i = 0; i < N; i++) {
+      if (!shade[i] || seen[i]) continue;
+      const region = [i];
+      let sum = 0, sum2 = 0;
+      seen[i] = 1;
+      for (let r = 0; r < region.length; r++) {
+        const j = region[r];
+        sum += cov[j]; sum2 += cov[j] * cov[j];
+        for (const o of [1, -1, W, -W]) if (shade[j + o] && !seen[j + o]) { seen[j + o] = 1; region.push(j + o); }
+      }
+      const mean = sum / region.length;
+      if (Math.sqrt(Math.max(0, sum2 / region.length - mean * mean)) > 0.18) for (const j of region) shade[j] = 0;
+      else kept = true;
+    }
+    return kept ? shade : null;
   }
 
   // Pencil shading as hatching over `region` (2 = shading, 1 = line work or untoned shading it passes under): 45-degree strokes
@@ -812,7 +890,7 @@
 
   function vectorize(rgba, width, height, options = {}) {
     if (!(width > 0 && height > 0) || rgba.length < width * height * 4) throw new Error("Invalid image data.");
-    const detail = clamp(Number(options.detail ?? 60), 0, 100) / 100;
+    const detail = clamp(Number(options.detail ?? 100), 0, 100) / 100;
     // Trace grid: k x k cells per image pixel. Small images are upscaled (bicubic) so thin and low-res lines get
     // sub-pixel centres, widths and junctions. Every length below is in grid cells.
     const k = clamp(Math.min(Math.floor(TRACE_SIDE / Math.max(width, height)), Math.floor(Math.sqrt(MAX_TRACE_PIXELS / (width * height)))), 1, MAX_UPSCALE);
@@ -850,7 +928,7 @@
     }
     const peak = maxFilter(cov, W, H, 2 * k);
     const ink = new Uint8Array(N);
-    for (let i = 0; i < N; i++) ink[i] = !(shade && shade[i]) && cov[i] >= MIN_COVERAGE && cov[i] >= 0.5 * peak[i] ? 1 : 0;
+    for (let i = 0; i < N; i++) ink[i] = !(shade && shade[i]) && cov[i] >= MIN_COVERAGE && cov[i] >= (k >= 4 ? 0.35 : 0.5) * peak[i] ? 1 : 0;
     dropSmallComponents(ink, W, H, 1, MIN_SPECK_AREA * k * k);
     dropSmallComponents(ink, W, H, 0, (MAX_HOLE_AREA + 1) * k * k);
     const dist = distanceTransform(ink, W, H);
@@ -883,6 +961,13 @@
       const ch = [[], [], []];
       for (let i = 0; i < pts.length; i += 2) if (isCore(pts[i], pts[i + 1])) pixelColor(pts[i], pts[i + 1]).forEach((v, c) => ch[c].push(v));
       return ch[0].length ? median3(ch) : null;
+    };
+    // On paper, coverage is the largest channel's distance from it, so a solid light colour (pink, sky blue) reads as
+    // faint ink. Coloured ink is a pen in its own colour; only grey ink (offset proportional to the paper) can be pencil.
+    const tinted = (rgb) => {
+      if (transparent || !rgb) return false;
+      const d = rgb.map((v, c) => v - bg[c]);
+      return Math.max(...d) - Math.min(...d) > 0.3 * Math.max(...d.map(Math.abs));
     };
 
     // Pair the straightest same-coloured branches at each crossing so a drawn line stays one stroke.
@@ -1167,7 +1252,7 @@
           pen,
         });
       };
-      if (core >= PEN_MIN_ALPHA) {
+      if (core >= PEN_MIN_ALPHA || tinted(edgeColor(raw))) {
         const solid = new Uint8Array(m);
         for (const r of runs) if (r.solid) solid.fill(1, r.a, r.b + 1);
         emit(0, m - 1, "pen", core, runs.every((r) => r.solid) ? null : op.map((o, i) => (solid[i] ? 1 : o / core)));
@@ -1189,7 +1274,7 @@
     for (const i of g.dots) {
       const x = i % W, y = (i / W) | 0;
       const pr = crossProfile(covMass, W, H, x, y, 1, 0, dist[i] + 2.5 * k, k, cov);
-      const core = Math.max(0.05, peak[i]), pen = core >= PEN_MIN_ALPHA ? "pen" : "pencil";
+      const core = Math.max(0.05, peak[i]), pen = core >= PEN_MIN_ALPHA || tinted(pixelColor(x, y)) ? "pen" : "pencil";
       const color = argb(pen === "pen" ? penAlpha(core) : pencilAlpha(core), (pen === "pen" ? null : inkColor([x, y])) || pixelColor(x, y));
       strokes.push({ points: [toImage([x, y])], widths: [Math.max(1, pr.mass / core / k)], color, closed: false, pen });
     }
@@ -1252,7 +1337,7 @@
         while (b + 1 < densePts.length && b - a < MAX_STROKE_POINTS - 1) {
           const l = Math.min(lo, denseWidths[b + 1]), h = Math.max(hi, denseWidths[b + 1]);
           const al = Math.min(aLo, denseAlphas[b + 1]), ah = Math.max(aHi, denseAlphas[b + 1]);
-          if (cut && ((fixed === null && h > PIECE_TAPER * l) || ah - al > PIECE_ALPHA)) break;
+          if (cut && ((fixed === null && h > PIECE_TAPER * l && h - l > PIECE_STEP) || ah - al > PIECE_ALPHA)) break;
           lo = l; hi = h; aLo = al; aHi = ah; b++;
         }
         const size = fixed ?? denseWidths.slice(a, b + 1).reduce((sum, w) => sum + w, 0) / (b - a + 1);
@@ -1292,7 +1377,8 @@
   // end, at 0.5 or 2 units/ms it drops to ~0.52 within 100-200 units (calibration screenshot, FORMAT.md section 8).
   const PEN_SPEED = 0.1;               // page units per ms
   const STROKE_GAP_MS = 150;
-  const PIECE_TAPER = 1.05;            // a piece spans at most this width ratio of a tapering line
+  const PIECE_TAPER = 1.12;            // a piece spans at most this width ratio of a tapering line
+  const PIECE_STEP = 0.3;              // unless the width changes by less than this (page units): too little to see
   const PIECE_ALPHA = 0.05;            // and this much opacity of a fade
   // Pencil2 grain makes its tone differ from its alpha: [alpha, mean darkness it lays down], same screenshot.
   const PENCIL_TONE = [[0, 0], [0.1, 0.133], [0.2, 0.183], [0.3, 0.229], [0.4, 0.299], [0.5, 0.386], [0.6, 0.466], [0.7, 0.548], [0.8, 0.608], [0.9, 0.671], [1, 0.726]];
@@ -1644,7 +1730,7 @@
     return result.toBytes();
   }
 
-  // Classic ZIP writer, using uncompressed members to avoid any external library.
+  // Classic ZIP writer. Members are stored; packSdocx() deflates them, as Samsung Notes does (about 3x smaller).
   const CRC_TABLE = (() => {
     const table = new Uint32Array(256);
     for (let n=0;n<256;n++) { let c=n; for(let k=0;k<8;k++) c=(c&1)?(0xEDB88320^(c>>>1)):(c>>>1); table[n]=c>>>0; }
@@ -1659,15 +1745,15 @@
     const localParts = [], centralParts = [];
     let offset = 0;
     for (const entry of entries) {
-      const name = utf8(entry.name), data = entry.data, crc = crc32(data);
+      const name = utf8(entry.name), data = entry.data, crc = crc32(data), body = entry.packed || data, method = entry.packed ? 8 : 0;
       const local = new Writer();
-      local.u32(0x04034B50).u16(20).u16(0x0800).u16(0).u16(0).u16(0x0021);
-      local.u32(crc).u32(data.length).u32(data.length).u16(name.length).u16(0).bytes(name).bytes(data);
+      local.u32(0x04034B50).u16(20).u16(0x0800).u16(method).u16(0).u16(0x0021);
+      local.u32(crc).u32(body.length).u32(data.length).u16(name.length).u16(0).bytes(name).bytes(body);
       const localBytes = local.toBytes();
       localParts.push(localBytes);
       const central = new Writer();
-      central.u32(0x02014B50).u16(20).u16(20).u16(0x0800).u16(0).u16(0).u16(0x0021);
-      central.u32(crc).u32(data.length).u32(data.length).u16(name.length).u16(0).u16(0).u16(0).u16(0).u32(0).u32(offset).bytes(name);
+      central.u32(0x02014B50).u16(20).u16(20).u16(0x0800).u16(method).u16(0).u16(0x0021);
+      central.u32(crc).u32(body.length).u32(data.length).u16(name.length).u16(0).u16(0).u16(0).u16(0).u32(0).u32(offset).bytes(name);
       centralParts.push(central.toBytes());
       offset += localBytes.length;
     }
@@ -1702,17 +1788,25 @@
     const noteHeight = pages.reduce((sum, p) => sum + p.height, 0) + NOTE_VERTICAL_PADDING;
     const endTag = buildEndTag(noteWidth, noteHeight, now, now);
     const trailer = buildEndTag(noteWidth, noteHeight, now, now / 1000n);
-    const bytes = zipStored([
+    const entries = [
       { name: "pageIdInfo.dat", data: buildPageIdInfo(note.hash, pages) },
       ...pages.map((p) => ({ name: p.id + ".page", data: p.data })),
       { name: "media/mediaInfo.dat", data: buildMediaInfo() },
       { name: "note.note", data: note.data },
       { name: "end_tag.bin", data: endTag },
-    ], trailer);
-    return { bytes, objects, pageWidth, pageHeight, drawnRect: mainPage.drawnRect };
+    ];
+    return { bytes: zipStored(entries, trailer), entries, trailer, objects, pageWidth, pageHeight, drawnRect: mainPage.drawnRect };
   }
 
-  global.SdocxCore = { vectorize, pageGeometry, layoutStrokes, buildSdocx, pencilTone, strokeWidths, MAX_STROKES };
+  // The same note with deflated members (browsers and Node 22 have CompressionStream). Stored bytes if unavailable.
+  async function packSdocx(built) {
+    if (typeof CompressionStream !== "function") return built.bytes;
+    const deflate = async (data) => new Uint8Array(await new Response(new Blob([data]).stream().pipeThrough(new CompressionStream("deflate-raw"))).arrayBuffer());
+    const entries = await Promise.all(built.entries.map(async (e) => ({ ...e, packed: await deflate(e.data) })));
+    return zipStored(entries, built.trailer);
+  }
+
+  global.SdocxCore = { vectorize, pageGeometry, layoutStrokes, buildSdocx, packSdocx, pencilTone, strokeWidths, flattenPaper, MAX_STROKES };
 })(globalThis);
 </script>
 
@@ -1730,7 +1824,7 @@
   const detailInput = $("detail");
   const strokeCanvas = $("stroke-canvas");
   const MAX_PROCESS_SIDE = 2048;
-  let selected = null;       // { name, bitmap, pixels, width, height }
+  let selected = null;       // { name, bitmap, pixels (paper flattened), width, height, flattened }
   let traced = null;         // vectorize() result for the current detail level
   let previewUrl = null;
   let traceTimer = 0;
@@ -1766,7 +1860,7 @@
     if (value === "black") return 0xFF000000;
     if (value === "dark") return 0xFF202124;
     if (value === "warm") return 0xFFFFF7E8;
-    return sampleAutoBackground(bitmap);
+    return selected?.flattened ? 0xFFFFFFFF : sampleAutoBackground(bitmap);
   }
 
   function sanitizeFilename(value) {
@@ -1792,9 +1886,11 @@
     ctx.clearRect(0, 0, width, height);
     ctx.imageSmoothingQuality = "high";
     ctx.drawImage(bitmap, 0, 0, width, height);
-    const pixels = ctx.getImageData(0, 0, width, height).data;
+    const raw = ctx.getImageData(0, 0, width, height).data;
     canvas.width = 1; canvas.height = 1;
-    return { name: file.name, bitmap, pixels, width, height };
+    // A photo of paper is evened out to white before tracing (and the accuracy compares against that).
+    const pixels = core.flattenPaper(raw, width, height);
+    return { name: file.name, bitmap, pixels, width, height, flattened: pixels !== raw };
   }
 
   function currentLayout() {
@@ -1964,7 +2060,7 @@
       const { geometry, strokes } = currentLayout();
       const now = BigInt(Date.now()) * 1000n + BigInt(Math.floor((performance.now() % 1) * 1000));
       const result = core.buildSdocx({ title, page: geometry, background: chooseBackground(selected.bitmap), strokes, now });
-      const blob = new Blob([result.bytes], { type: "application/octet-stream" });
+      const blob = new Blob([await core.packSdocx(result)], { type: "application/octet-stream" });
       const url = URL.createObjectURL(blob);
       const link = document.createElement("a");
       link.href = url;

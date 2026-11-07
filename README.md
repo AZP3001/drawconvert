@@ -21,8 +21,8 @@ Images with a long side over 2048 px are scaled down before tracing.
 
 ## How it works
 
-1. **Ink:** alpha for transparent images, distance from the paper colour for opaque ones. Images under 1600 px are traced on a bicubic enlargement (up to 8×), so thin and low-resolution lines get sub-pixel centres and widths.
-2. **Shading:** broad, light ink (gradients, flat tones, pencil grain) is separated from the lines and hatched with the *Pencil* (Pencil2): 45° strokes that tile the area, each with the alpha of the tone under it. Lines over shading are measured on their own, with the shading taken out.
+1. **Ink:** alpha for transparent images, distance from the paper colour for opaque ones. A photo of a page is evened out first: the paper's lighting and tint are fitted as a smooth surface and divided out, so the paper reads as white and its shadows don't turn into shading. Images under 1600 px are traced on a bicubic enlargement (up to 8×), so thin and low-resolution lines get sub-pixel centres and widths. On small images (enlarged 4× or more) fainter lines right next to dark ones still count as ink, since lines there sit about a pixel apart.
+2. **Shading:** broad, light, even ink (gradients, flat tones, pencil grain) is separated from the lines (crowded line work, which mixes paper and ink, stays lines) and hatched with the *Pencil* (Pencil2): 45° strokes that tile the area, each with the alpha of the tone under it. Lines over shading are measured on their own, with the shading taken out.
 3. **Centre lines:** distance transform, then thinning to one-pixel skeletons.
 4. **Lines:** the skeleton becomes a graph, and at every crossing the straightest branches of the same colour are joined. A drawn line stays one line through the lines it crosses.
 5. **Width and colour:** measured across the line on a non-ringing (bilinear) enlargement, stopping at the dip before a neighbouring line so close lines don't widen each other. Even lines get one width; tapered lines keep their profile, and line ends are placed by the ink area they cover. The colour is the median of the line's own pixels. Where a line fades out, it keeps its opacity point by point.
@@ -62,6 +62,7 @@ GitHub Pages serves this repository straight from the `main` branch, so every pu
 
 - Shading comes out as Pencil hatching in 10% tone steps. Its tone is calibrated on the phone, but the grain isn't drawn in the preview, and the Pencil can't go darker than about 73%.
 - Solid dark fills come out as thick centre lines, not fills.
+- Photos of pencil drawings come out as hatching: tone is matched, but fine pencil texture and lines inside the shading are mostly lost (about 57 % accuracy on a test photo).
 - Below about 2 px, a line's opacity can't be told from its width. Such lines are drawn as thin, opaque lines in the ink colour, so a thin translucent line comes out thinner and stronger than it was. On paper (no transparency) a thin coloured line can come out a little over-saturated. A fade on such a line becomes a taper.
 - A line gone over twice, with paper showing between the passes, can come out as several short strokes.
 - Tracing runs on the page's main thread, so a 2048 px image pauses it for about a second.
