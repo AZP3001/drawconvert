@@ -1090,13 +1090,16 @@
 
     const strokes = [];
     // Shading: pencil hatching whose tone follows the shading around the lines (lines are drawn on top).
-    if (shade) {
-      const region = new Uint8Array(N);
-      for (let i = 0; i < N; i++) region[i] = shade[i] && tone[i] > 0 ? 2 : shade[i] || ink[i] ? 1 : 0;
+    const hatch = (region, tone) => {
       for (const h of hatchStrokes(region, tone, W, H, spacing, inkColor)) {
         const [hx, hy] = h.points[0], dark = h.alpha > SHADE_MAX || !!(penShade && penShade[clamp(Math.round(hy), 0, H - 1) * W + clamp(Math.round(hx), 0, W - 1)]), c = dark && !transparent ? h.color.map((v, ch) => Math.round(bg[ch] + h.alpha * (v - bg[ch]))) : h.color;
         strokes.push({ points: h.points.map(toImage), widths: h.points.map(() => h.width / k), color: argb(dark ? penAlpha(h.alpha) : pencilAlpha(h.alpha), c), closed: false, pen: dark ? "pen" : "pencil" });
       }
+    };
+    if (shade) {
+      const region = new Uint8Array(N);
+      for (let i = 0; i < N; i++) region[i] = shade[i] && tone[i] > 0 ? 2 : shade[i] || ink[i] ? 1 : 0;
+      hatch(region, tone);
     }
 
     // A free skeleton end stops short of the drawn tip (about half the width, more on tapered ends).
@@ -1359,6 +1362,68 @@
       const core = Math.max(0.05, peak[i]), pen = core >= PEN_MIN_ALPHA || tinted(pixelColor(x, y)) ? "pen" : "pencil";
       const color = argb(pen === "pen" ? penAlpha(core) : pencilAlpha(core), (pen === "pen" ? null : inkColor([x, y])) || pixelColor(x, y));
       strokes.push({ points: [toImage([x, y])], widths: [Math.max(1, pr.mass / core / k)], color, closed: false, pen });
+    }
+    // Closed loop. The strokes are drawn at image resolution (ink coverage, as the preview composites them): the ink they
+    // still miss (a colour halo along a contour, a soft cast shadow) is hatched, then each stroke gets the ink the picture
+    // has under it and a pixel around it: a pen line widens, a pencil stroke darkens or lightens (3 damped rounds).
+    const inkOf = (v) => {
+      if (transparent) return 1;
+      let m = 0;
+      for (let c = 0; c < 3; c++) { const x = (v >>> (16 - 8 * c)) & 255, d = x - bg[c], room = d < 0 ? bg[c] : 255 - bg[c]; m = Math.max(m, Math.abs(d) / (room >= 48 ? room : 255)); }
+      return m;
+    };
+    const draw = () => {
+      const shown = new Float32Array(width * height), feet = [];
+      for (const st of strokes) {
+        const a = ((st.color >>> 24) & 255) / 255, c = inkOf(st.color) * (st.pen === "pencil" ? pencilTone(a) : a);
+        const own = new Map(), P = st.points, Wd = st.widths;
+        for (let j = 0; j < P.length; j++) {
+          const [x1, y1] = P[j], [x0, y0] = P[Math.max(0, j - 1)], r = Wd[j] / 2;
+          const n = Math.max(1, Math.ceil(Math.hypot(x1 - x0, y1 - y0) / 0.5));
+          for (let q = j ? 1 : 0; q <= n; q++) {
+            const cx = x0 + (x1 - x0) * q / n, cy = y0 + (y1 - y0) * q / n;
+            for (let y = Math.max(0, Math.floor(cy - r - 1)); y <= Math.min(height - 1, Math.ceil(cy + r + 1)); y++)
+              for (let x = Math.max(0, Math.floor(cx - r - 1)); x <= Math.min(width - 1, Math.ceil(cx + r + 1)); x++) {
+                // the pixel's share of the stroke's cross-section; the footprint reaches a pixel past the edge
+                const d = Math.hypot(x + 0.5 - cx, y + 0.5 - cy), f = clamp(Math.min(d + r, 0.5) - Math.max(d - r, -0.5), 0, 1), p = y * width + x;
+                if (f > 0 || d <= r + 1) own.set(p, Math.max(f, own.get(p) || 0));
+              }
+          }
+        }
+        for (const [p, f] of own) shown[p] = 1 - (1 - shown[p]) * (1 - f * c);   // strokes composite over each other
+        feet.push(own);
+      }
+      return { shown, feet };
+    };
+    if (!transparent && strokes.length) {
+      const { shown } = draw(), miss = new Float32Array(width * height);
+      for (let p = 0; p < miss.length; p++) miss[p] = Math.max(0, cov0[p] - shown[p]);
+      const soft = blur(miss, width, height, 1), around = maxFilter(shown, width, height, 1), lack = new Uint8Array(width * height);
+      for (let p = 0; p < miss.length; p++) lack[p] = soft[p] >= 0.08 && around[p] < 0.5 * cov0[p] ? 1 : 0;
+      dropSmallComponents(lack, width, height, 1, 6);
+      const region = new Uint8Array(N), rt = new Float32Array(N);
+      for (let i = 0; i < N; i++) {
+        const x = i % W, y = (i / W) | 0;
+        if (x < 1 || y < 1 || x >= W - 1 || y >= H - 1) continue;
+        const p = source(x, y);
+        if (lack[p]) { region[i] = 2; rt[i] = Math.min(SHADE_MAX, soft[p]); } else if (shown[p] > 0.05) region[i] = 1;
+      }
+      hatch(region, rt);
+    }
+    for (let round = 0; round < 3 && strokes.length; round++) {
+      const { shown, feet } = draw();
+      strokes.forEach((st, si) => {
+        let want = 0, have = 0;
+        for (const [p] of feet[si]) { want += cov0[p]; have += shown[p]; }
+        if (!(have > 0 && want > 0)) return;
+        const r = clamp(Math.pow(want / have, 0.6), 0.6, 1.6);
+        // Pen lines only widen: narrowing thin clean lines lost more than it gained on the test drawings.
+        if (st.pen === "pen") st.widths = st.widths.map((w) => w * Math.max(1, r));
+        else {
+          const tone = Math.min(PENCIL_TONE[PENCIL_TONE.length - 1][1], pencilTone(((st.color >>> 24) & 255) / 255) * r);
+          st.color = ((clamp(Math.round(pencilAlphaFor(tone) * 255), 1, 255) << 24) | (st.color & 0xFFFFFF)) >>> 0;
+        }
+      });
     }
     return { strokes, width, height, transparent };
   }
@@ -2073,7 +2138,7 @@
     await new Promise((resolve) => setTimeout(resolve, 30));
     try {
       const started = performance.now();
-      // shortcut: tracing runs on the main thread (the page pauses ~1 s on 2048 px images), move it to a Worker if large scans feel sluggish
+      // shortcut: tracing runs on the main thread (the page pauses up to ~4 s on 2048 px images), move it to a Worker if large scans feel sluggish
       traced = core.vectorize(selected.pixels, selected.width, selected.height, { detail: Number(detailInput.value) });
       if (!traced.strokes.length) throw new Error("No lines found. Use line art on a transparent or plain background.");
       if (traced.strokes.length > core.MAX_STROKES) throw new Error(`${traced.strokes.length.toLocaleString()} lines found: this looks like a photo or shaded image. Use line art.`);

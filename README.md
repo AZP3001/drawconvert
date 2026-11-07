@@ -45,7 +45,7 @@ GitHub Pages serves this repository straight from the `main` branch, so every pu
 - Photos of pencil drawings come out as hatching with the lines drawn over it: tone is matched, but fine pencil grain is lost.
 - Below about 2 px, a line's opacity can't be told from its width. Such lines are drawn as thin, opaque lines in the ink colour, so a thin translucent line comes out thinner and stronger than it was. On paper (no transparency) a thin coloured line can come out a little over-saturated. A fade on such a line becomes a taper.
 - A line gone over twice, with paper showing between the passes, can come out as several short strokes.
-- Tracing runs on the page's main thread, so a 2048 px image pauses it for about a second.
+- Tracing runs on the page's main thread and checks its own result in several passes, so a 2048 px image pauses it for up to about 4 seconds.
 - A tapering or fading line is a chain of short strokes, so the stroke eraser removes one piece at a time. Use the lasso to select or delete a whole line.
 - The Pen and Pencil rules come from screenshots of one phone. Other devices may draw them slightly differently.
 
