@@ -49,6 +49,18 @@
   .preview-label { display: flex; justify-content: space-between; color: var(--muted); font-size: 12px; margin: 0 2px 8px; }
   .preview { min-height: 180px; max-height: 360px; padding: 16px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #fff; overflow: hidden; }
   .preview img { display: block; max-width: 100%; max-height: 320px; object-fit: contain; box-shadow: 0 8px 32px #0008; }
+  .previews { display: grid; grid-template-columns: 1fr; gap: 10px; }
+  .previews.live-on { grid-template-columns: 1fr 1fr; }
+  .preview canvas { display: block; max-width: 100%; max-height: 320px; box-shadow: 0 8px 32px #0008; }
+  #preview-canvas { cursor: crosshair; touch-action: none; }
+  .live { position: relative; background: repeating-conic-gradient(#d9dce1 0 25%, #fff 0 50%) 0 0 / 16px 16px; }
+  .live .compare-tag { left: 8px; }
+  .erase-row { display: flex; align-items: center; gap: 10px; margin-top: 8px; color: var(--muted); font-size: 12px; }
+  .erase-row input[type=range] { flex: 1; }
+  .small { padding: 6px 10px; border: 1px solid #3b414d; border-radius: 8px; background: #121419; color: var(--text); font: inherit; font-size: 12px; cursor: pointer; }
+  .small:disabled { opacity: .4; cursor: not-allowed; }
+  .check { justify-content: flex-start; cursor: pointer; }
+  .check input { width: 17px; height: 17px; margin: 0; accent-color: #c7dcfa; }
   .stroke-preview { padding: 12px; display: grid; place-items: center; border: 1px solid var(--line); border-radius: 13px; background: #171a20; }
   .stroke-preview canvas { display: block; max-width: 100%; height: auto; box-shadow: 0 8px 32px #0008; }
   /* Before/after slider: your picture over the strokes, shown left of the divider. An invisible range input on top
@@ -89,6 +101,7 @@
   @media (max-width: 740px) {
     .shell { padding-top: 30px; }
     .layout { grid-template-columns: 1fr; }
+    .previews.live-on { grid-template-columns: 1fr; }
     .dropzone { min-height: 190px; }
   }
 </style>
@@ -114,8 +127,17 @@
       </div>
       <input id="file-input" type="file" accept="image/*">
       <div class="preview-wrap" id="preview-wrap">
-        <div class="preview-label"><span>Image preview</span><span id="dimensions"></span></div>
-        <div class="preview" id="preview"><img id="preview-img" alt="Preview of the selected drawing"></div>
+        <div class="preview-label"><span>Image preview — paint over a part (watermark, text) to cut it out</span><span id="dimensions"></span></div>
+        <div class="previews" id="previews">
+          <div class="preview" id="preview"><canvas id="preview-canvas" width="1" height="1" role="img" aria-label="Your drawing; paint over it to erase parts before tracing"></canvas></div>
+          <div class="preview live" id="live-box" hidden><span class="compare-tag">Live preview</span><canvas id="live-canvas" width="1" height="1" role="img" aria-label="The drawing as it is traced, background removed"></canvas></div>
+        </div>
+        <div class="erase-row">
+          <label for="brush" style="margin:0;font-weight:500">Eraser</label>
+          <input id="brush" type="range" min="1" max="15" step="1" value="4" aria-label="Eraser size">
+          <button class="small" id="undo-erase" type="button" disabled>Undo</button>
+          <button class="small" id="clear-erase" type="button" disabled>Restore all</button>
+        </div>
         <div class="preview-label" style="margin-top:14px"><span>Stroke preview — drag across it to compare with your picture</span><span id="stroke-count"></span></div>
         <div class="stroke-preview">
           <div class="compare" id="compare">
@@ -144,6 +166,13 @@
           <option value="dark">Dark grey</option>
           <option value="warm">Warm paper</option>
         </select>
+      </div>
+      <div class="field">
+        <label class="check" for="remove-bg"><input id="remove-bg" type="checkbox"> Remove background <span class="hint">Edge colour becomes transparent</span></label>
+        <div class="range-row" id="tolerance-row" hidden>
+          <input id="tolerance" type="range" min="1" max="40" step="1" value="8" aria-label="Background tolerance">
+          <output id="tolerance-value" for="tolerance">8%</output>
+        </div>
       </div>
       <div class="field">
         <label for="margin">Page margin <span class="hint">Space around the drawing</span></label>
@@ -334,6 +363,30 @@
   // Cuts solid bars off the edges (letterbox, frame, scanner bed): rows and columns that are at least 97 % far from the
   // paper colour, at most a quarter of the image per side, plus 2 px of the bar's blurred edge. Returns the same array
   // and size when there is no frame, or { rgba, width, height } of the cropped copy.
+  // Background removal: the edge colour (median of the outer 2 px ring) and every colour within `tolerance` of it (largest
+  // channel distance, as a share of how far that channel can go) become transparent. Other pixels keep their look over
+  // that colour: alpha = that distance, colour = the ink that composites back to the pixel (colour to alpha).
+  function removeBackground(rgba, width, height, tolerance) {
+    const ring = [[], [], []];
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      if (x > 1 && y > 1 && x < width - 2 && y < height - 2) continue;
+      for (let c = 0; c < 3; c++) ring[c].push(rgba[4 * (y * width + x) + c]);
+    }
+    const edge = ring.map((v) => quantile(v, 0.5)), out = new Uint8ClampedArray(rgba);
+    for (let i = 0; i < out.length; i += 4) {
+      let d = 0;
+      for (let c = 0; c < 3; c++) {
+        const v = rgba[i + c] - edge[c], room = v < 0 ? edge[c] : 255 - edge[c];
+        d = Math.max(d, Math.abs(v) / (room >= 48 ? room : 255));
+      }
+      d = Math.min(1, d);
+      if (d <= tolerance) { out[i + 3] = 0; continue; }
+      for (let c = 0; c < 3; c++) out[i + c] = edge[c] + (rgba[i + c] - edge[c]) / d;
+      out[i + 3] = Math.round(d * rgba[i + 3]);
+    }
+    return out;
+  }
+
   function trimFrame(rgba, width, height) {
     for (let i = 3; i < rgba.length; i += 4) if (rgba[i] < 250) return { rgba, width, height };
     const paper = paperColor(rgba, width, height);
@@ -1958,7 +2011,7 @@
     return zipStored(entries, built.trailer);
   }
 
-  global.SdocxCore = { vectorize, paperColor, trimFrame, pageGeometry, layoutStrokes, buildSdocx, packSdocx, pencilTone, strokeWidths, flattenPaper, MAX_STROKES };
+  global.SdocxCore = { vectorize, paperColor, trimFrame, removeBackground, pageGeometry, layoutStrokes, buildSdocx, packSdocx, pencilTone, strokeWidths, flattenPaper, MAX_STROKES };
 })(globalThis);
 </script>
 
@@ -1975,10 +2028,11 @@
   const marginInput = $("margin");
   const detailInput = $("detail");
   const strokeCanvas = $("stroke-canvas");
+  const removeBg = $("remove-bg");
+  const toleranceInput = $("tolerance");
   const MAX_PROCESS_SIDE = 2048;
-  let selected = null;       // { name, bitmap, pixels (frame trimmed, paper flattened), width, height, transparent, paper }
+  let selected = null;       // { name, base (frame trimmed, paper flattened), erased mask, undo, pixels (as traced), bitmap, width, height, transparent, paper }
   let traced = null;         // vectorize() result for the current detail level
-  let previewUrl = null;
   let traceTimer = 0;
 
   function chooseBackground() {
@@ -2015,15 +2069,58 @@
     ctx.drawImage(bitmap, 0, 0, width, height);
     const full = ctx.getImageData(0, 0, width, height).data;
     canvas.width = 1; canvas.height = 1;
-    // Frame bars are cut off (the preview shows the cut picture), then a photo of paper is evened out to white.
+    // Frame bars are cut off, then a photo of paper is evened out to white; the previews show this picture.
     const cut = core.trimFrame(full, width, height), raw = cut.rgba;
-    if (raw !== full) { bitmap.close?.(); bitmap = await createImageBitmap(new ImageData(new Uint8ClampedArray(raw), cut.width, cut.height)); }
-    const pixels = core.flattenPaper(raw, cut.width, cut.height);
+    bitmap.close?.();
+    const base = core.flattenPaper(raw, cut.width, cut.height);
+    let seeThrough = false;
+    for (let i = 3; i < base.length; i += 4) if (base[i] < 250) { seeThrough = true; break; }
+    return { name: file.name, base, seeThrough, basePaper: seeThrough ? null : core.paperColor(base, cut.width, cut.height),
+      width: cut.width, height: cut.height, erased: new Uint8Array(cut.width * cut.height), undo: [] };
+  }
+
+  // What gets traced: the loaded picture with the erased parts cut out (paper, or transparent) and, when chosen, the
+  // background made transparent. Sets pixels, transparent, paper and the bitmap the comparison shows.
+  async function applyEdits() {
+    const { base, width, height, erased, seeThrough, basePaper } = selected;
+    let pixels = new Uint8ClampedArray(base);
+    for (let p = 0; p < erased.length; p++) {
+      if (!erased[p]) continue;
+      if (seeThrough) pixels[4 * p + 3] = 0;
+      else for (let c = 0; c < 3; c++) pixels[4 * p + c] = basePaper[c];
+    }
+    if (removeBg.checked) pixels = core.removeBackground(pixels, width, height, Number(toleranceInput.value) / 100);
     let transparent = false;
     for (let i = 3; i < pixels.length; i += 4) if (pixels[i] < 250) { transparent = true; break; }
     // Auto page colour: the paper's (white under transparency, or after a photo was evened out).
-    const [r, g, b] = transparent ? [255, 255, 255] : core.paperColor(pixels, cut.width, cut.height);
-    return { name: file.name, bitmap, pixels, width: cut.width, height: cut.height, transparent, paper: (0xFF000000 | (r << 16) | (g << 8) | b) >>> 0 };
+    const [r, g, b] = transparent ? [255, 255, 255] : core.paperColor(pixels, width, height);
+    const bitmap = await createImageBitmap(new ImageData(pixels, width, height));
+    selected.bitmap?.close?.();
+    Object.assign(selected, { pixels, transparent, bitmap, paper: (0xFF000000 | (r << 16) | (g << 8) | b) >>> 0 });
+    drawSource();
+  }
+
+  // The image preview (erased parts tinted red) and, with background removal on, the live preview of what is traced.
+  function drawSource() {
+    const { base, width, height, erased } = selected, view = new Uint8ClampedArray(base);
+    for (let p = 0; p < erased.length; p++) if (erased[p]) {
+      view[4 * p] = (view[4 * p] + 255) >> 1; view[4 * p + 1] >>= 1; view[4 * p + 2] >>= 1; view[4 * p + 3] = Math.max(view[4 * p + 3], 160);
+    }
+    for (const [id, data] of [["preview-canvas", view], ["live-canvas", selected.pixels]]) {
+      const canvas = $(id);
+      canvas.width = width; canvas.height = height;
+      canvas.getContext("2d").putImageData(new ImageData(data, width, height), 0, 0);
+    }
+    $("live-box").hidden = !removeBg.checked;
+    $("previews").classList.toggle("live-on", removeBg.checked);
+    $("undo-erase").disabled = !selected.undo.length;
+    $("clear-erase").disabled = !selected.erased.some((v) => v);
+  }
+
+  async function editsChanged() {
+    if (!selected) return;
+    await applyEdits();
+    await retrace();
   }
 
   function currentLayout() {
@@ -2167,12 +2264,10 @@
       const loaded = await loadImageFile(file);
       selected?.bitmap?.close?.();
       selected = loaded;
-      if (previewUrl) URL.revokeObjectURL(previewUrl);
-      previewUrl = URL.createObjectURL(file);
-      $("preview-img").src = previewUrl;
+      await applyEdits();
       $("preview-wrap").style.display = "block";
       $("file-meta").textContent = `${file.name} · ${(file.size / 1024 / 1024).toFixed(2)} MB`;
-      $("dimensions").textContent = `${loaded.bitmap.width.toLocaleString()} × ${loaded.bitmap.height.toLocaleString()} px`;
+      $("dimensions").textContent = `${loaded.width.toLocaleString()} × ${loaded.height.toLocaleString()} px`;
       const currentName = $("note-name").value.trim();
       if (!currentName || currentName === "My Drawing") $("note-name").value = file.name.replace(/\.[^.]+$/, "").slice(0,100);
       await retrace();
@@ -2192,6 +2287,36 @@
   marginInput.addEventListener("input", () => { $("margin-value").textContent = `${marginInput.value}%`; drawPreview(); });
   $("background").addEventListener("change", drawPreview);
   $("split").addEventListener("input", (event) => $("compare").style.setProperty("--split", `${event.target.value}%`));
+  // Eraser: paint on the image preview; each drag is one undo step, and the drawing is retraced when it ends.
+  let painting = false;
+  const previewCanvas = $("preview-canvas");
+  const paintAt = (event) => {
+    const box = previewCanvas.getBoundingClientRect(), { width, height, erased } = selected;
+    const x = (event.clientX - box.left) / box.width * width, y = (event.clientY - box.top) / box.height * height;
+    const r = Number($("brush").value) / 200 * Math.max(width, height);
+    for (let yy = Math.max(0, Math.floor(y - r)); yy <= Math.min(height - 1, Math.ceil(y + r)); yy++)
+      for (let xx = Math.max(0, Math.floor(x - r)); xx <= Math.min(width - 1, Math.ceil(x + r)); xx++)
+        if ((xx + 0.5 - x) ** 2 + (yy + 0.5 - y) ** 2 <= r * r) erased[yy * width + xx] = 1;
+    drawSource();
+  };
+  previewCanvas.addEventListener("pointerdown", (event) => {
+    if (!selected) return;
+    painting = true;
+    previewCanvas.setPointerCapture(event.pointerId);
+    selected.undo.push(selected.erased.slice());
+    if (selected.undo.length > 30) selected.undo.shift();
+    paintAt(event);
+  });
+  previewCanvas.addEventListener("pointermove", (event) => { if (painting) paintAt(event); });
+  for (const name of ["pointerup", "pointercancel"]) previewCanvas.addEventListener(name, () => { if (painting) { painting = false; editsChanged(); } });
+  $("undo-erase").addEventListener("click", () => { if (selected?.undo.length) { selected.erased = selected.undo.pop(); editsChanged(); } });
+  $("clear-erase").addEventListener("click", () => { if (selected) { selected.undo.push(selected.erased); selected.erased = new Uint8Array(selected.width * selected.height); editsChanged(); } });
+  removeBg.addEventListener("change", () => { $("tolerance-row").hidden = !removeBg.checked; editsChanged(); });
+  toleranceInput.addEventListener("input", () => {
+    $("tolerance-value").textContent = `${toleranceInput.value}%`;
+    clearTimeout(traceTimer);
+    traceTimer = setTimeout(editsChanged, 250);
+  });
   detailInput.addEventListener("input", () => {
     $("detail-value").textContent = detailInput.value;
     clearTimeout(traceTimer);

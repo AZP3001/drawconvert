@@ -10,12 +10,15 @@ Drop in a PNG and download a `.sdocx` note. In Samsung Notes the lines are norma
 
 1. Open **https://azp3001.github.io/drawconvert/** in Chrome or Edge, on a computer or on the phone. You can also download `index.html` and open it locally; it works offline. Either way, nothing is uploaded.
 2. Drop a PNG on it, or click to pick one. A transparent background works best; drawings on any plain paper colour (white, cream, grey, black) work too, in any ink colour. The note page takes the picture's background colour by default.
-3. Check the **stroke preview**. It is what Samsung Notes will show.
+3. Optional clean-up, on the image preview:
+   - **Eraser**: paint over a part (a watermark, text, a signature) and it is cut out before tracing. **Undo** and **Restore all** take it back.
+   - **Remove background** (off by default): the edge colour, and every colour within the tolerance of it (8% by default), becomes transparent; the rest keeps its look. A **Live preview** next to the image shows what will be traced.
+4. Check the **stroke preview**. It is what Samsung Notes will show.
    - **Compare**: drag across the preview. Left of the divider is your picture, right of it the strokes, in the same place on the page.
    - **Accuracy** under it: how closely the strokes reproduce your picture, at the picture's own resolution (the ink both share over all the ink in either, weighted by strength; 100% = identical). The picture's ink is measured against its own paper colour, lines a pixel off still match, and paper grain is ignored. It scores the preview, so the Pencil's grain on the phone isn't counted.
    - **Detail**: left smooths the lines, right follows every wiggle.
    - **Page margin**, **page background** and **note name** work as you'd expect.
-4. Click **Convert to .sdocx**, copy the file to the phone and open it in Samsung Notes (My Files, tap the file).
+5. Click **Convert to .sdocx**, copy the file to the phone and open it in Samsung Notes (My Files, tap the file).
 
 Images with a long side over 2048 px are scaled down before tracing.
 
